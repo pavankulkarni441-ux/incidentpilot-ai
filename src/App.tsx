@@ -6,6 +6,7 @@ import { TopologyView } from './components/Topology/TopologyView';
 import { AuditView } from './components/Audit/AuditView';
 import { DesignSystemView } from './components/DesignSystem/DesignSystemView';
 import { DeclareIncidentModal } from './components/DeclareIncidentModal';
+import { N8nSetupGuideModal } from './components/N8nSetupGuideModal';
 import {
   initialActiveIncident,
   initialAiHypothesis,
@@ -16,13 +17,15 @@ import {
   topologyServices,
   auditEventsList,
 } from './data/mockData';
-import { Incident } from './types/incident';
+import { Incident, AuditEvent, N8nWorkflowResponse } from './types/incident';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<NavTab>('warroom');
   const [activeIncident, setActiveIncident] = useState<Incident>(initialActiveIncident);
   const [allIncidents, setAllIncidents] = useState<Incident[]>(allIncidentsList);
+  const [auditEvents, setAuditEvents] = useState<AuditEvent[]>(auditEventsList);
   const [isDeclareModalOpen, setIsDeclareModalOpen] = useState(false);
+  const [isSetupGuideOpen, setIsSetupGuideOpen] = useState(false);
 
   const handleSelectIncident = (inc: Incident) => {
     setActiveIncident(inc);
@@ -54,6 +57,42 @@ export default function App() {
     setAllIncidents((prev) => [fullNewIncident, ...prev]);
     setActiveIncident(fullNewIncident);
     setActiveTab('warroom');
+  };
+
+  /**
+   * Handle real verified n8n webhook response
+   * Updates incident state and appends real audit event
+   */
+  const handleExecutionCompleteWithResult = (result: N8nWorkflowResponse) => {
+    const timeFormatted = result.execution_timestamp
+      ? new Date(result.execution_timestamp).toTimeString().split(' ')[0] + ' UTC'
+      : new Date().toTimeString().split(' ')[0] + ' UTC';
+
+    const newAuditEvent: AuditEvent = {
+      id: `aud-${Date.now()}`,
+      timestamp: timeFormatted,
+      actorType: 'N8N_WORKFLOW',
+      actorName: 'n8n Production Workflow',
+      action: `Remediation Workflow Executed (Status: ${result.workflow_status || 'completed'})`,
+      details: `[Approval ID: ${result.approval_id}] Result: ${result.result_message}. Simulated execution verified on target service ${activeIncident.service}.`,
+      verificationStatus: result.success ? 'verified' : 'failed',
+    };
+
+    setAuditEvents((prev) => [newAuditEvent, ...prev]);
+
+    const updatedInc: Incident = {
+      ...activeIncident,
+      status: 'resolved',
+      workflowStatus: result.workflow_status,
+      lastApprovalResult: result,
+      p99LatencyMs: 42,
+      errorRatePercent: 0.1,
+    };
+
+    setActiveIncident(updatedInc);
+    setAllIncidents((prev) =>
+      prev.map((inc) => (inc.id === activeIncident.id ? updatedInc : inc))
+    );
   };
 
   return (
@@ -120,6 +159,8 @@ export default function App() {
             spans={initialTraceSpans}
             logs={initialTelemetryLogs}
             onNavigateToAudit={() => setActiveTab('audit')}
+            onExecutionCompleteWithResult={handleExecutionCompleteWithResult}
+            onOpenSetupGuide={() => setIsSetupGuideOpen(true)}
           />
         )}
 
@@ -134,7 +175,7 @@ export default function App() {
         {activeTab === 'topology' && <TopologyView services={topologyServices} />}
 
         {activeTab === 'audit' && (
-          <AuditView events={auditEventsList} activeIncident={activeIncident} />
+          <AuditView events={auditEvents} activeIncident={activeIncident} />
         )}
 
         {activeTab === 'design-system' && <DesignSystemView />}
@@ -147,20 +188,31 @@ export default function App() {
             IncidentPilot Platform • SRE High-Stakes War Room & Autonomous Remediation
           </div>
           <div className="flex items-center gap-4 text-[11px]">
-            <span>Cluster: prod-us-east-k8s</span>
+            <button
+              onClick={() => setIsSetupGuideOpen(true)}
+              className="text-[#60A5FA] hover:underline cursor-pointer"
+            >
+              n8n Secrets Setup Guide
+            </button>
             <span>•</span>
-            <span>Auth Gate: HikariCP v2.14</span>
+            <span>Cluster: prod-us-east-k8s</span>
             <span>•</span>
             <span className="text-[#34D399]">Telemetry Heartbeat 100%</span>
           </div>
         </div>
       </footer>
 
-      {/* Modal Dialog */}
+      {/* Declare Incident Modal Dialog */}
       <DeclareIncidentModal
         isOpen={isDeclareModalOpen}
         onClose={() => setIsDeclareModalOpen(false)}
         onDeclare={handleDeclareIncident}
+      />
+
+      {/* N8N Setup Guide Modal Dialog */}
+      <N8nSetupGuideModal
+        isOpen={isSetupGuideOpen}
+        onClose={() => setIsSetupGuideOpen(false)}
       />
     </div>
   );

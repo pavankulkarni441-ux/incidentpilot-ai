@@ -13,6 +13,7 @@ import {
   Download,
   AlertCircle,
   HelpCircle,
+  Workflow,
 } from 'lucide-react';
 
 interface AuditViewProps {
@@ -31,6 +32,10 @@ export const AuditView: React.FC<AuditViewProps> = ({ events, activeIncident }) 
 **Service Affected**: ${activeIncident.service}  
 **Duration**: ${activeIncident.durationMinutes} minutes  
 **Blast Radius**: ${activeIncident.blastRadius}  
+${activeIncident.lastApprovalResult ? `**Automated Workflow Status**: ${activeIncident.lastApprovalResult.workflow_status}  
+**Workflow Approval ID**: \`${activeIncident.lastApprovalResult.approval_id}\`  
+**Execution Timestamp**: ${activeIncident.lastApprovalResult.execution_timestamp}  
+**Workflow Result Message**: ${activeIncident.lastApprovalResult.result_message}  ` : ''}
 
 ---
 
@@ -137,6 +142,7 @@ ${events
           {events.map((ev, idx) => {
             const isAi = ev.actorType === 'AI_AGENT';
             const isHuman = ev.actorType === 'HUMAN_COMMANDER';
+            const isN8n = ev.actorType === 'N8N_WORKFLOW';
 
             return (
               <div
@@ -145,7 +151,11 @@ ${events
               >
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
-                    {isAi ? (
+                    {isN8n ? (
+                      <span className="w-6 h-6 rounded bg-[#4EDEA3]/10 border border-[#4EDEA3]/40 flex items-center justify-center text-[#4EDEA3]">
+                        <Workflow className="w-3.5 h-3.5" />
+                      </span>
+                    ) : isAi ? (
                       <span className="w-6 h-6 rounded bg-[#3B82F6]/10 border border-[#3B82F6]/40 flex items-center justify-center text-[#60A5FA]">
                         <Bot className="w-3.5 h-3.5" />
                       </span>

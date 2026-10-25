@@ -1,12 +1,32 @@
 export type SeverityLevel = 'SEV-0' | 'SEV-1' | 'SEV-2' | 'SEV-3';
 export type IncidentStatus = 'investigating' | 'mitigating' | 'resolved' | 'monitoring';
 
+export interface N8nWorkflowResponse {
+  success: boolean;
+  incident_id: string;
+  approval_id: string;
+  workflow_status: string;
+  result_message: string;
+  execution_timestamp: string;
+  raw?: any;
+  error?: string;
+  code?: string;
+}
+
+export interface WebhookConfigStatus {
+  configured: boolean;
+  simulation_enforced: boolean;
+  env_variable: string;
+  message: string;
+}
+
 export interface Incident {
   id: string;
   code: string; // e.g. "INC-4892"
   title: string;
   severity: SeverityLevel;
   status: IncidentStatus;
+  workflowStatus?: string; // e.g. "workflow_dispatched", "completed", "rejected", "pending_approval"
   service: string;
   commander: {
     name: string;
@@ -21,6 +41,7 @@ export interface Incident {
   p99LatencyMs: number;
   errorRatePercent: number;
   activeHypothesisId?: string;
+  lastApprovalResult?: N8nWorkflowResponse;
 }
 
 export interface AiHypothesis {
@@ -99,7 +120,7 @@ export interface ServiceNode {
 export interface AuditEvent {
   id: string;
   timestamp: string;
-  actorType: 'AI_AGENT' | 'HUMAN_COMMANDER' | 'SYSTEM_PROBE';
+  actorType: 'AI_AGENT' | 'HUMAN_COMMANDER' | 'SYSTEM_PROBE' | 'N8N_WORKFLOW';
   actorName: string;
   action: string;
   details: string;

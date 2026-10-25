@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Incident, AiHypothesis, PodMetric, TraceSpan, TelemetryLog } from '../../types/incident';
+import { Incident, AiHypothesis, PodMetric, TraceSpan, TelemetryLog, N8nWorkflowResponse, WebhookConfigStatus } from '../../types/incident';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
 import { MetricCard } from '../ui/MetricCard';
@@ -18,6 +18,9 @@ import {
   Shield,
   Radio,
   FileText,
+  Key,
+  ShieldCheck,
+  Check,
 } from 'lucide-react';
 
 interface WarRoomViewProps {
@@ -27,6 +30,8 @@ interface WarRoomViewProps {
   spans: TraceSpan[];
   logs: TelemetryLog[];
   onNavigateToAudit?: () => void;
+  onExecutionCompleteWithResult?: (result: N8nWorkflowResponse) => void;
+  onOpenSetupGuide?: () => void;
 }
 
 export const WarRoomView: React.FC<WarRoomViewProps> = ({
@@ -36,6 +41,8 @@ export const WarRoomView: React.FC<WarRoomViewProps> = ({
   spans,
   logs: propLogs,
   onNavigateToAudit,
+  onExecutionCompleteWithResult,
+  onOpenSetupGuide,
 }) => {
   const [incident, setIncident] = useState<Incident>(propIncident);
   const [hypothesis, setHypothesis] = useState<AiHypothesis>(propHypothesis);
@@ -44,6 +51,13 @@ export const WarRoomView: React.FC<WarRoomViewProps> = ({
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [appliedFlags, setAppliedFlags] = useState<{ [key: string]: boolean }>({});
   const [activeSeconds, setActiveSeconds] = useState(18 * 60 + 42); // 18m 42s
+  const [lastN8nResult, setLastN8nResult] = useState<N8nWorkflowResponse | null>(null);
+  const [webhookStatus, setWebhookStatus] = useState<WebhookConfigStatus | null>(null);
+
+  // Sync prop changes
+  useEffect(() => {
+    setIncident(propIncident);
+  }, [propIncident]);
 
   // Live elapsed timer
   useEffect(() => {
@@ -51,6 +65,21 @@ export const WarRoomView: React.FC<WarRoomViewProps> = ({
       setActiveSeconds((prev) => prev + 1);
     }, 1000);
     return () => clearInterval(timer);
+  }, []);
+
+  // Check webhook server status on mount
+  useEffect(() => {
+    fetch('/api/webhook/status')
+      .then((res) => res.json())
+      .then((data) => setWebhookStatus(data))
+      .catch(() => {
+        setWebhookStatus({
+          configured: false,
+          simulation_enforced: true,
+          env_variable: 'N8N_WEBHOOK_URL',
+          message: 'Unable to query /api/webhook/status',
+        });
+      });
   }, []);
 
   const formatTimer = (totalSecs: number) => {
@@ -65,14 +94,21 @@ export const WarRoomView: React.FC<WarRoomViewProps> = ({
     setIsModalOpen(true);
   };
 
-  const handleExecutionComplete = () => {
+  // Called ONLY after real HTTP 200 response from backend/n8n
+  const handleExecutionComplete = (result: N8nWorkflowResponse) => {
     setIsMitigated(true);
-    setIncident((prev) => ({
-      ...prev,
+    setLastN8nResult(result);
+
+    const updatedInc: Incident = {
+      ...incident,
       status: 'resolved',
+      workflowStatus: result.workflow_status || 'completed',
+      lastApprovalResult: result,
       p99LatencyMs: 42,
       errorRatePercent: 0.1,
-    }));
+    };
+
+    setIncident(updatedInc);
     setHypothesis((prev) => ({
       ...prev,
       status: 'executed_verified',
@@ -86,6 +122,10 @@ export const WarRoomView: React.FC<WarRoomViewProps> = ({
         maxConnections: 60,
       }))
     );
+
+    if (onExecutionCompleteWithResult) {
+      onExecutionCompleteWithResult(result);
+    }
   };
 
   const handleReject = (reason: string) => {
@@ -93,11 +133,11 @@ export const WarRoomView: React.FC<WarRoomViewProps> = ({
       ...prev,
       status: 'rejected',
     }));
-    alert(`Hypothesis rejected. Rationale logged: "${reason}". AI synthesizer requested to formulate alternate runbook.`);
   };
 
   const handleReset = () => {
     setIsMitigated(false);
+    setLastN8nResult(null);
     setIncident(propIncident);
     setHypothesis(propHypothesis);
     setPods(propPods);
@@ -105,6 +145,38 @@ export const WarRoomView: React.FC<WarRoomViewProps> = ({
 
   return (
     <div className="space-y-6">
+      {/* n8n Webhook Status Banner */}
+      <div className="bg-[#111827] border border-[#374151] rounded-lg px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs font-mono">
+        <div className="flex items-center gap-2.5">
+          <span className="text-[#9CA3AF]">Automation Pipeline:</span>
+          {webhookStatus?.configured ? (
+            <Badge variant="healthy" showSquare>
+              N8N WEBHOOK READY (HTTP 200)
+            </Badge>
+          ) : (
+            <Badge variant="warning" showSquare>
+              N8N_WEBHOOK_URL NOT CONFIGURED
+            </Badge>
+          )}
+          <span className="text-[#6B7280] hidden sm:inline">
+            Policy: <strong className="text-[#34D399]">simulation_mode=true enforced</strong>
+          </span>
+        </div>
+
+        <div className="flex items-center gap-2">
+          {onOpenSetupGuide && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onOpenSetupGuide}
+              icon={<Key className="w-3 h-3 text-[#60A5FA]" />}
+            >
+              Webhook Setup & Secrets Guide
+            </Button>
+          )}
+        </div>
+      </div>
+
       {/* Incident Status Banner */}
       <div className="bg-[#111827] border border-[#374151] rounded-lg p-4 sm:p-5 shadow-lg">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
@@ -125,6 +197,11 @@ export const WarRoomView: React.FC<WarRoomViewProps> = ({
                   {incident.status}
                 </strong>
               </span>
+              {incident.workflowStatus && (
+                <span className="text-xs font-mono text-[#60A5FA] bg-[#080C13] border border-[#374151] px-2 py-0.5 rounded">
+                  n8n: {incident.workflowStatus}
+                </span>
+              )}
             </div>
 
             <h1 className="text-lg sm:text-xl font-semibold text-[#F9FAFB] tracking-tight">
@@ -164,16 +241,7 @@ export const WarRoomView: React.FC<WarRoomViewProps> = ({
                 <Button variant="secondary" size="sm" onClick={handleReset} icon={<RotateCcw className="w-3.5 h-3.5" />}>
                   Re-arm Outage Scenario
                 </Button>
-              ) : (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={handleExecutionComplete}
-                  icon={<Zap className="w-3.5 h-3.5 text-[#3B82F6]" />}
-                >
-                  Force Instant Resolve
-                </Button>
-              )}
+              ) : null}
             </div>
           </div>
         </div>
@@ -264,13 +332,22 @@ export const WarRoomView: React.FC<WarRoomViewProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <span className="text-sm font-semibold text-[#F9FAFB]">
-                  Hotfix Patch Successfully Executed & Verified
+                  Remediation Verified by n8n Workflow
                 </span>
-                <Badge variant="healthy">STABILIZED</Badge>
+                <Badge variant="healthy">
+                  {lastN8nResult?.workflow_status ? lastN8nResult.workflow_status.toUpperCase() : 'VERIFIED'}
+                </Badge>
               </div>
               <p className="text-xs text-[#9CA3AF] mt-0.5">
-                HikariCP connection pool expanded to 60 with asynchronous revocation token bypass enabled.
+                {lastN8nResult?.result_message || 'Simulated remediation action executed successfully by n8n workflow.'}
               </p>
+              {lastN8nResult && (
+                <div className="mt-1.5 flex flex-wrap items-center gap-3 text-[11px] font-mono text-[#6B7280]">
+                  <span>Approval ID: <strong className="text-[#DCE2F3]">{lastN8nResult.approval_id}</strong></span>
+                  <span>•</span>
+                  <span>Executed: <strong className="text-[#DCE2F3]">{lastN8nResult.execution_timestamp}</strong></span>
+                </div>
+              )}
             </div>
           </div>
 
@@ -282,7 +359,7 @@ export const WarRoomView: React.FC<WarRoomViewProps> = ({
                 onClick={onNavigateToAudit}
                 icon={<FileText className="w-3.5 h-3.5" />}
               >
-                View Post-Mortem Retrospective
+                View Audit Trail
               </Button>
             )}
             <Button variant="secondary" size="sm" onClick={handleReset}>
@@ -308,12 +385,15 @@ export const WarRoomView: React.FC<WarRoomViewProps> = ({
       {/* Live Telemetry Log Feed with fixed-width slots */}
       <TelemetryLogFeed initialLogs={propLogs} isMitigated={isMitigated} />
 
-      {/* Live Execution Terminal Modal */}
+      {/* Live Execution Terminal Modal connected to backend /api/approvals/dispatch */}
       <ExecutionTerminalModal
         isOpen={isModalOpen}
         flags={appliedFlags}
+        incident={incident}
+        hypothesis={hypothesis}
         onComplete={handleExecutionComplete}
         onClose={() => setIsModalOpen(false)}
+        onOpenSetupGuide={onOpenSetupGuide}
       />
     </div>
   );
