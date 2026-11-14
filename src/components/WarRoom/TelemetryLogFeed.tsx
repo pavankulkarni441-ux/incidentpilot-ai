@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { TelemetryLog } from '../../types/incident';
-import { Terminal, Search, Pause, Play, Copy, Check, Filter } from 'lucide-react';
+import { Terminal, Search, Pause, Play, Copy, Check } from 'lucide-react';
 
 interface TelemetryLogFeedProps {
   initialLogs: TelemetryLog[];
@@ -14,7 +14,6 @@ export const TelemetryLogFeed: React.FC<TelemetryLogFeedProps> = ({ initialLogs,
   const [isStreaming, setIsStreaming] = useState(true);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  // Simulate incoming live telemetry stream
   useEffect(() => {
     if (!isStreaming) return;
 
@@ -79,42 +78,40 @@ export const TelemetryLogFeed: React.FC<TelemetryLogFeedProps> = ({ initialLogs,
   });
 
   return (
-    <div className="bg-[#111827] border border-[#374151] rounded-lg overflow-hidden flex flex-col">
-      {/* Header with Search and Filter bar */}
-      <div className="bg-[#151C27] border-b border-[#374151] px-4 py-3 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <Terminal className="w-4 h-4 text-[#3B82F6]" />
-          <span className="text-xs font-mono font-semibold text-[#DCE2F3]">
+    <div className="neu-surface rounded-2xl overflow-hidden flex flex-col">
+      {/* Header */}
+      <div className="border-b border-[var(--ip-border)] px-5 py-3.5 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <Terminal className="w-4 h-4 text-[#3B82F6] dark:text-[#60A5FA] shrink-0" />
+          <span className="text-xs font-mono font-semibold text-[var(--ip-text)] tracking-wide">
             LIVE TELEMETRY STREAM
           </span>
-          <span className="text-[11px] font-mono text-[#6B7280]">
+          <span className="text-[11px] font-mono text-[var(--ip-text-muted)]">
             ({filteredLogs.length} events)
           </span>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2.5">
-          {/* Search bar conforming to design spec */}
-          <div className="relative flex items-center">
-            <Search className="w-3.5 h-3.5 text-[#6B7280] absolute left-2 pointer-events-none" />
+        <div className="flex flex-wrap items-center gap-2.5 w-full sm:w-auto">
+          <div className="relative flex items-center flex-1 sm:flex-initial min-w-0">
+            <Search className="w-3.5 h-3.5 text-[var(--ip-text-muted)] absolute left-2.5 pointer-events-none" />
             <input
               type="text"
               placeholder="Filter payload or source..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="bg-[#080C13] border border-[#374151] focus:border-[#3B82F6] text-[#F9FAFB] text-xs font-mono pl-7 pr-3 py-1 rounded outline-none placeholder-[#4B5563] w-48 sm:w-64 transition-colors"
+              className="neu-inset focus:border-[#3B82F6]/50 text-[var(--ip-text)] text-xs font-mono pl-8 pr-3 py-1.5 rounded-lg outline-none placeholder-[var(--ip-text-muted)] w-full sm:w-64 transition-colors"
             />
           </div>
 
-          {/* Severity filter buttons */}
-          <div className="flex items-center bg-[#080C13] border border-[#374151] rounded p-0.5 text-xs font-mono">
+          <div className="flex items-center neu-inset rounded-lg p-0.5 text-xs font-mono">
             {(['ALL', 'CRIT', 'WARN', 'INFO'] as const).map((sev) => (
               <button
                 key={sev}
                 onClick={() => setSeverityFilter(sev)}
-                className={`px-2 py-0.5 rounded transition-colors cursor-pointer text-[11px] ${
+                className={`px-2.5 py-1 rounded-md transition-colors cursor-pointer text-[11px] ${
                   severityFilter === sev
-                    ? 'bg-[#1F2937] text-white font-semibold'
-                    : 'text-[#9CA3AF] hover:text-white'
+                    ? 'neu-pill text-[var(--ip-text)] font-semibold'
+                    : 'text-[var(--ip-text-secondary)] hover:text-[var(--ip-text)]'
                 }`}
               >
                 {sev}
@@ -122,10 +119,9 @@ export const TelemetryLogFeed: React.FC<TelemetryLogFeedProps> = ({ initialLogs,
             ))}
           </div>
 
-          {/* Stream toggle */}
           <button
             onClick={() => setIsStreaming(!isStreaming)}
-            className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-mono bg-[#1F2937] border border-[#374151] hover:border-[#4B5563] text-[#DCE2F3] rounded cursor-pointer transition-colors"
+            className="neu-pill flex items-center gap-1.5 px-3 py-1.5 text-xs font-mono text-[var(--ip-text)] rounded-lg cursor-pointer transition-colors"
           >
             {isStreaming ? (
               <>
@@ -142,10 +138,10 @@ export const TelemetryLogFeed: React.FC<TelemetryLogFeedProps> = ({ initialLogs,
         </div>
       </div>
 
-      {/* Log Rows - Strictly conforming to design doc */}
-      <div className="bg-[#111827] max-h-[380px] overflow-y-auto divide-y divide-[#1F2937]">
+      {/* Log Rows */}
+      <div className="bg-[var(--ip-inset)]/70 max-h-[380px] overflow-y-auto divide-y divide-[var(--ip-border)]">
         {filteredLogs.length === 0 ? (
-          <div className="p-8 text-center text-xs font-mono text-[#6B7280]">
+          <div className="p-8 text-center text-xs font-mono text-[var(--ip-text-muted)]">
             No telemetry records match current filters.
           </div>
         ) : (
@@ -156,44 +152,39 @@ export const TelemetryLogFeed: React.FC<TelemetryLogFeedProps> = ({ initialLogs,
             return (
               <div
                 key={log.id}
-                className="flex items-start gap-3 px-3 py-2 text-xs font-mono hover:bg-[#1F2937] transition-colors group cursor-default"
+                className="flex flex-wrap sm:flex-nowrap items-start gap-2.5 sm:gap-3 px-4 py-2.5 text-xs font-mono hover:bg-[var(--ip-pill)]/50 transition-colors group cursor-default"
               >
-                {/* Fixed-width Timestamp */}
-                <div className="w-[84px] shrink-0 text-[#6B7280] text-[11px] tabular-nums pt-0.5">
+                <div className="w-[82px] shrink-0 text-[var(--ip-text-muted)] text-[11px] tabular-nums pt-0.5">
                   {log.timestamp}
                 </div>
 
-                {/* Fixed-width Severity Indicator */}
                 <div className="w-[52px] shrink-0 pt-0.5">
                   <span
-                    className={`inline-block text-[10px] font-semibold px-1 py-0.2 rounded border ${
+                    className={`inline-block text-[10px] font-semibold px-1.5 py-0.5 rounded-md border ${
                       isCrit
-                        ? 'bg-red-950/60 text-[#F87171] border-red-800'
+                        ? 'bg-[#EF4444]/10 text-[#DC2626] dark:text-[#FCA5A5] border-[#EF4444]/25'
                         : isWarn
-                        ? 'bg-amber-950/60 text-[#FBBF24] border-amber-800'
-                        : 'bg-slate-800 text-[#9CA3AF] border-slate-700'
+                        ? 'bg-[#F59E0B]/10 text-[#B45309] dark:text-[#FCD34D] border-[#F59E0B]/25'
+                        : 'bg-[var(--ip-pill)] text-[var(--ip-text-secondary)] border-[var(--ip-border)]'
                     }`}
                   >
                     {log.severity}
                   </span>
                 </div>
 
-                {/* Fixed-width Source Micro-badge */}
-                <div className="w-[130px] shrink-0 truncate text-[#9CA3AF] text-[11px] pt-0.5">
-                  <span className="bg-[#080C13] border border-[#1F2937] px-1.5 py-0.5 rounded text-[#C2C6D6]">
+                <div className="w-[125px] shrink-0 truncate text-[11px] pt-0.5">
+                  <span className="neu-inset px-2 py-0.5 rounded-md text-[var(--ip-text-secondary)]">
                     {log.source}
                   </span>
                 </div>
 
-                {/* Payload message in code-inline */}
-                <div className="flex-1 text-[#E5E7EB] text-[12px] font-mono break-all pt-0.5 selection:bg-[#3B82F6]">
+                <div className="flex-1 min-w-0 text-[var(--ip-text)] text-[12px] font-mono break-words pt-0.5 selection:bg-[#3B82F6]">
                   <code>{log.payload}</code>
                 </div>
 
-                {/* Quick copy affordance on hover */}
                 <button
                   onClick={() => copyLog(log)}
-                  className="opacity-0 group-hover:opacity-100 text-[#6B7280] hover:text-white transition-opacity shrink-0 cursor-pointer pt-0.5"
+                  className="opacity-60 sm:opacity-0 group-hover:opacity-100 text-[var(--ip-text-muted)] hover:text-[var(--ip-text)] transition-opacity shrink-0 cursor-pointer pt-0.5"
                   title="Copy log entry"
                 >
                   {copiedId === log.id ? (
@@ -209,10 +200,10 @@ export const TelemetryLogFeed: React.FC<TelemetryLogFeedProps> = ({ initialLogs,
       </div>
 
       {/* Footer bar */}
-      <div className="bg-[#151C27] border-t border-[#374151] px-4 py-2 flex items-center justify-between text-[11px] font-mono text-[#6B7280]">
-        <span>Ingestion Rate: 420 events/sec • Buffer: 100 rows</span>
-        <span className="flex items-center gap-1.5">
-          <span className="w-2 h-2 rounded-none bg-[#10B981]" />
+      <div className="border-t border-[var(--ip-border)] px-5 py-2.5 flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono text-[var(--ip-text-muted)]">
+        <span>Ingestion Rate: 420 events/sec · Buffer: 100 rows</span>
+        <span className="flex items-center gap-1.5 text-[var(--ip-text-secondary)]">
+          <span className="w-2 h-2 rounded-full bg-[#10B981]" />
           Stream Connection Nominal
         </span>
       </div>

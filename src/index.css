@@ -1,18 +1,63 @@
 @import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
 
 @layer base {
   :root {
-    --font-inter: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+    /* Optional Light Neumorphism Palette */
+    --ip-canvas: #E6EAF0;
+    --ip-surface: #EDF1F6;
+    --ip-surface-alt: #E3E8EF;
+    --ip-inset: #DCE2EB;
+    --ip-pill: #F3F6FA;
+    --ip-pill-hover: #FFFFFF;
+    --ip-header-bg: rgba(230, 234, 240, 0.92);
+    --ip-text: #111827;
+    --ip-text-secondary: #4B5563;
+    --ip-text-muted: #6B7280;
+    --ip-border: rgba(15, 23, 42, 0.08);
+    --ip-border-strong: rgba(15, 23, 42, 0.14);
+    --ip-shadow-raised: 8px 8px 18px rgba(163, 173, 189, 0.55), -6px -6px 14px rgba(255, 255, 255, 0.85);
+    --ip-shadow-inset: inset 4px 4px 8px rgba(163, 173, 189, 0.5), inset -3px -3px 7px rgba(255, 255, 255, 0.82);
+    --ip-shadow-pill: 4px 4px 9px rgba(163, 173, 189, 0.45), -3px -3px 7px rgba(255, 255, 255, 0.85);
+    --ip-scroll-track: #E6EAF0;
+    --ip-scroll-thumb: #BFC7D4;
+    --ip-scroll-thumb-hover: #9AA5B7;
   }
 
+  .dark {
+    /* Primary Deep Charcoal Dark Neumorphism Palette (#252830 range) */
+    --ip-canvas: #252830;
+    --ip-surface: #2B2F39;
+    --ip-surface-alt: #272B34;
+    --ip-inset: #1E2128;
+    --ip-pill: #323743;
+    --ip-pill-hover: #3A404E;
+    --ip-header-bg: rgba(37, 40, 48, 0.92);
+    --ip-text: #F8FAFC;
+    --ip-text-secondary: #A1A8B5;
+    --ip-text-muted: #7D8596;
+    --ip-border: rgba(255, 255, 255, 0.06);
+    --ip-border-strong: rgba(255, 255, 255, 0.11);
+    --ip-shadow-raised: 8px 8px 18px rgba(15, 17, 22, 0.58), -5px -5px 12px rgba(58, 64, 78, 0.24);
+    --ip-shadow-inset: inset 4px 4px 9px rgba(14, 16, 21, 0.72), inset -3px -3px 7px rgba(54, 60, 73, 0.2);
+    --ip-shadow-pill: 4px 4px 10px rgba(14, 16, 21, 0.52), -2px -2px 6px rgba(58, 64, 78, 0.24);
+    --ip-scroll-track: #252830;
+    --ip-scroll-thumb: #3A404D;
+    --ip-scroll-thumb-hover: #4C5466;
+  }
+
+  html,
   body {
-    font-family: var(--font-inter);
-    background-color: #0c141f;
-    color: #dce2f3;
+    font-family: var(--font-sans);
+    background-color: var(--ip-canvas);
+    color: var(--ip-text);
+    overflow-x: hidden;
+    transition: background-color 180ms ease, color 180ms ease;
   }
 
-  /* Force tabular numerals globally on mono fonts and metrics */
   .font-mono,
   code,
   pre,
@@ -21,19 +66,41 @@
     font-variant-numeric: tabular-nums;
   }
 
-  /* Custom scrollbar for dense log viewports */
   ::-webkit-scrollbar {
     width: 6px;
     height: 6px;
   }
   ::-webkit-scrollbar-track {
-    background: #080c13;
+    background: var(--ip-scroll-track);
   }
   ::-webkit-scrollbar-thumb {
-    background: #2e3541;
-    border-radius: 2px;
+    background: var(--ip-scroll-thumb);
+    border-radius: 3px;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: #424754;
+    background: var(--ip-scroll-thumb-hover);
   }
+}
+
+/* Dark / Light Neumorphism Surface Utilities */
+.neu-surface {
+  background-color: var(--ip-surface);
+  border: 1px solid var(--ip-border);
+  box-shadow: var(--ip-shadow-raised);
+}
+
+.neu-inset {
+  background-color: var(--ip-inset);
+  border: 1px solid var(--ip-border);
+  box-shadow: var(--ip-shadow-inset);
+}
+
+.neu-pill {
+  background-color: var(--ip-pill);
+  border: 1px solid var(--ip-border);
+  box-shadow: var(--ip-shadow-pill);
+}
+
+.neu-pill:hover {
+  background-color: var(--ip-pill-hover);
 }

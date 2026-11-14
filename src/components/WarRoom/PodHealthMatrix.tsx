@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { PodMetric } from '../../types/incident';
-import { Server, Activity, Terminal, X, RefreshCw } from 'lucide-react';
-import { Button } from '../ui/Button';
+import { Server, Terminal, X } from 'lucide-react';
 
 interface PodHealthMatrixProps {
   pods: PodMetric[];
@@ -9,75 +8,76 @@ interface PodHealthMatrixProps {
 
 export const PodHealthMatrix: React.FC<PodHealthMatrixProps> = ({ pods }) => {
   const [inspectedPod, setInspectedPod] = useState<PodMetric | null>(null);
+  const saturatedCount = pods.filter(
+    (p) => p.status === 'Degraded' || p.activeConnections >= p.maxConnections
+  ).length;
+  const nominalCount = pods.length - saturatedCount;
 
   return (
-    <div className="bg-[#111827] border border-[#374151] rounded-lg overflow-hidden">
+    <div className="neu-surface rounded-2xl overflow-hidden">
       {/* Header */}
-      <div className="bg-[#151C27] border-b border-[#374151] px-4 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Server className="w-4 h-4 text-[#3B82F6]" />
-          <span className="text-xs font-mono font-semibold text-[#DCE2F3]">
+      <div className="border-b border-[var(--ip-border)] px-5 py-3.5 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2.5 min-w-0">
+          <Server className="w-4 h-4 text-[#3B82F6] dark:text-[#60A5FA] shrink-0" />
+          <span className="text-xs font-mono font-semibold text-[var(--ip-text)] tracking-wide">
             KUBERNETES REPLICA POOL MATRIX
           </span>
-          <span className="text-xs font-mono text-[#6B7280]">
-            Deployment: <strong className="text-[#9CA3AF]">auth-gateway-prod</strong> (6 Replicas)
+          <span className="text-xs font-mono text-[var(--ip-text-muted)]">
+            Deployment: <strong className="text-[var(--ip-text-secondary)]">auth-gateway-prod</strong> ({pods.length} Replicas)
           </span>
         </div>
 
-        <div className="flex items-center gap-2 text-xs font-mono text-[#9CA3AF]">
+        <div className="flex items-center gap-3 text-xs font-mono text-[var(--ip-text-secondary)]">
           <span className="flex items-center gap-1.5">
-            <span className="w-2 h-2 bg-[#EF4444] rounded-none" />
-            4 Saturated
+            <span className="w-2 h-2 bg-[#EF4444] rounded-full" />
+            {saturatedCount} Saturated
           </span>
-          <span className="text-[#424754]">|</span>
+          <span className="text-[var(--ip-border-strong)]">|</span>
           <span className="flex items-center gap-1.5">
-            <span className="w-2 h-2 bg-[#10B981] rounded-none" />
-            2 Nominal
+            <span className="w-2 h-2 bg-[#10B981] rounded-full" />
+            {nominalCount} Nominal
           </span>
         </div>
       </div>
 
       {/* Pod Grid */}
-      <div className="p-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 bg-[#0B0F17]">
+      <div className="p-4 sm:p-5 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5 bg-[var(--ip-inset)]/60">
         {pods.map((pod) => {
           const isDegraded = pod.status === 'Degraded' || pod.activeConnections >= pod.maxConnections;
           return (
             <div
               key={pod.name}
               onClick={() => setInspectedPod(pod)}
-              className={`bg-[#111827] border rounded p-3 transition-all cursor-pointer hover:border-[#4B5563] ${
-                isDegraded
-                  ? 'border-[#EF4444]/60 bg-[#161217]'
-                  : 'border-[#374151] hover:bg-[#1F2937]/50'
+              className={`neu-surface rounded-xl p-3.5 transition-all cursor-pointer hover:border-[var(--ip-border-strong)] ${
+                isDegraded ? 'ring-1 ring-[#EF4444]/30' : ''
               }`}
             >
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-1.5 font-mono text-xs font-medium">
+              <div className="flex items-center justify-between mb-2.5 gap-2">
+                <div className="flex items-center gap-2 font-mono text-xs font-medium min-w-0">
                   <span
-                    className={`w-2 h-2 rounded-none shrink-0 ${
+                    className={`w-2 h-2 rounded-full shrink-0 ${
                       isDegraded ? 'bg-[#EF4444]' : 'bg-[#10B981]'
                     }`}
                   />
-                  <span className="text-[#DCE2F3] truncate max-w-[150px]">{pod.name}</span>
+                  <span className="text-[var(--ip-text)] truncate">{pod.name}</span>
                 </div>
                 <span
-                  className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
+                  className={`text-[10px] font-mono px-2 py-0.5 rounded-md border shrink-0 ${
                     isDegraded
-                      ? 'bg-red-950/70 text-[#F87171] border border-red-800'
-                      : 'bg-emerald-950/70 text-[#34D399] border border-emerald-800'
+                      ? 'bg-[#EF4444]/10 text-[#DC2626] dark:text-[#FCA5A5] border-[#EF4444]/25'
+                      : 'bg-[#10B981]/10 text-[#047857] dark:text-[#6EE7B7] border-[#10B981]/25'
                   }`}
                 >
                   {pod.status}
                 </span>
               </div>
 
-              {/* Stats */}
-              <div className="grid grid-cols-2 gap-2 text-[11px] font-mono pt-2 border-t border-[#1F2937]">
+              <div className="grid grid-cols-2 gap-2.5 text-[11px] font-mono pt-2.5 border-t border-[var(--ip-border)]">
                 <div>
-                  <span className="text-[#6B7280] block text-[10px]">CPU Saturation</span>
+                  <span className="text-[var(--ip-text-muted)] block text-[10px]">CPU Saturation</span>
                   <span
                     className={`font-semibold tabular-nums ${
-                      pod.cpuUsage > 85 ? 'text-[#EF4444]' : 'text-[#DCE2F3]'
+                      pod.cpuUsage > 85 ? 'text-[#DC2626] dark:text-[#FCA5A5]' : 'text-[var(--ip-text)]'
                     }`}
                   >
                     {pod.cpuUsage.toFixed(1)}%
@@ -85,10 +85,12 @@ export const PodHealthMatrix: React.FC<PodHealthMatrixProps> = ({ pods }) => {
                 </div>
 
                 <div>
-                  <span className="text-[#6B7280] block text-[10px]">DB Connections</span>
+                  <span className="text-[var(--ip-text-muted)] block text-[10px]">DB Connections</span>
                   <span
                     className={`font-semibold tabular-nums ${
-                      pod.activeConnections >= pod.maxConnections ? 'text-[#EF4444]' : 'text-[#34D399]'
+                      pod.activeConnections >= pod.maxConnections
+                        ? 'text-[#DC2626] dark:text-[#FCA5A5]'
+                        : 'text-[#047857] dark:text-[#6EE7B7]'
                     }`}
                   >
                     {pod.activeConnections} / {pod.maxConnections}
@@ -96,21 +98,21 @@ export const PodHealthMatrix: React.FC<PodHealthMatrixProps> = ({ pods }) => {
                 </div>
 
                 <div>
-                  <span className="text-[#6B7280] block text-[10px]">Memory Allocated</span>
-                  <span className="text-[#DCE2F3] tabular-nums">
-                    {pod.memoryMb}MB <span className="text-[#6B7280]">/ 1024MB</span>
+                  <span className="text-[var(--ip-text-muted)] block text-[10px]">Memory Allocated</span>
+                  <span className="text-[var(--ip-text)] tabular-nums">
+                    {pod.memoryMb}MB <span className="text-[var(--ip-text-muted)]">/ 1024MB</span>
                   </span>
                 </div>
 
                 <div>
-                  <span className="text-[#6B7280] block text-[10px]">Restarts / Uptime</span>
-                  <span className="text-[#DCE2F3] tabular-nums">
+                  <span className="text-[var(--ip-text-muted)] block text-[10px]">Restarts / Uptime</span>
+                  <span className="text-[var(--ip-text)] tabular-nums">
                     {pod.restarts > 0 ? (
-                      <span className="text-[#F59E0B] font-semibold">{pod.restarts} (OOM)</span>
+                      <span className="text-[#B45309] dark:text-[#FCD34D] font-semibold">{pod.restarts} (OOM)</span>
                     ) : (
                       '0'
                     )}{' '}
-                    • <span className="text-[#9CA3AF]">{pod.uptime}</span>
+                    · <span className="text-[var(--ip-text-secondary)]">{pod.uptime}</span>
                   </span>
                 </div>
               </div>
@@ -121,26 +123,26 @@ export const PodHealthMatrix: React.FC<PodHealthMatrixProps> = ({ pods }) => {
 
       {/* Flyout Drawer for Pod Logs */}
       {inspectedPod && (
-        <div className="border-t border-[#374151] bg-[#080C13] p-4 animate-in fade-in duration-200">
-          <div className="flex items-center justify-between pb-2 border-b border-[#1F2937] mb-2 font-mono text-xs">
-            <div className="flex items-center gap-2">
-              <Terminal className="w-3.5 h-3.5 text-[#3B82F6]" />
-              <span className="text-[#DCE2F3] font-semibold">Pod Stdout Tail: {inspectedPod.name}</span>
-              <span className="text-[#6B7280]">Container: auth-gateway</span>
+        <div className="border-t border-[var(--ip-border)] bg-[var(--ip-surface-alt)] p-4 sm:p-5">
+          <div className="flex items-center justify-between pb-2.5 border-b border-[var(--ip-border)] mb-3 font-mono text-xs gap-2">
+            <div className="flex flex-wrap items-center gap-2 min-w-0">
+              <Terminal className="w-3.5 h-3.5 text-[#3B82F6] dark:text-[#60A5FA] shrink-0" />
+              <span className="text-[var(--ip-text)] font-semibold truncate">Pod Stdout Tail: {inspectedPod.name}</span>
+              <span className="text-[var(--ip-text-muted)]">Container: auth-gateway</span>
             </div>
             <button
               onClick={() => setInspectedPod(null)}
-              className="text-[#9CA3AF] hover:text-white cursor-pointer"
+              className="text-[var(--ip-text-secondary)] hover:text-[var(--ip-text)] cursor-pointer shrink-0"
             >
               <X className="w-4 h-4" />
             </button>
           </div>
-          <div className="font-mono text-[11px] text-[#C2C6D6] space-y-1 bg-[#05090F] p-3 rounded border border-[#1F2937] max-h-40 overflow-y-auto">
-            <div className="text-[#F87171]">[ERROR] 10:38:12.901 HikariPool-1 - Connection acquisition timed out after 1800ms.</div>
-            <div className="text-[#9CA3AF]">[DEBUG] 10:38:12.902 Waiting threads on AuthHikariPool: 48 (pool size 20/20)</div>
-            <div className="text-[#EF4444]">[WARN]  10:38:13.110 org.postgresql.util.PSQLException: FATAL: remaining connection slots reserved</div>
-            <div className="text-[#6B7280]">[INFO]  10:38:13.115 Dropping downstream HTTP keep-alive connection fd=412 to ingress-nginx</div>
-            <div className="text-[#34D399]">[INFO]  10:38:14.001 Health probe /healthz responded HTTP 503 Service Unavailable</div>
+          <div className="neu-inset font-mono text-[11px] text-[var(--ip-text-secondary)] space-y-1 p-3.5 rounded-xl max-h-40 overflow-y-auto">
+            <div className="text-[#DC2626] dark:text-[#FCA5A5]">[ERROR] 10:38:12.901 HikariPool-1 - Connection acquisition timed out after 1800ms.</div>
+            <div>[DEBUG] 10:38:12.902 Waiting threads on AuthHikariPool: 48 (pool size 20/20)</div>
+            <div className="text-[#B45309] dark:text-[#FCD34D]">[WARN]  10:38:13.110 org.postgresql.util.PSQLException: FATAL: remaining connection slots reserved</div>
+            <div className="text-[var(--ip-text-muted)]">[INFO]  10:38:13.115 Dropping downstream HTTP keep-alive connection fd=412 to ingress-nginx</div>
+            <div className="text-[#047857] dark:text-[#6EE7B7]">[INFO]  10:38:14.001 Health probe /healthz responded HTTP 503 Service Unavailable</div>
           </div>
         </div>
       )}

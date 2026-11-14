@@ -3,7 +3,7 @@ import { Incident } from '../../types/incident';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
 import { MetricCard } from '../ui/MetricCard';
-import { Search, Plus, ExternalLink, ShieldAlert, CheckCircle2, Clock, Filter, AlertTriangle } from 'lucide-react';
+import { Search, Plus, ExternalLink } from 'lucide-react';
 
 interface TriageViewProps {
   incidents: Incident[];
@@ -39,9 +39,9 @@ export const TriageView: React.FC<TriageViewProps> = ({
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <MetricCard
           label="Active High-Severity Outages"
-          value="1"
+          value={incidents.filter((i) => i.status !== 'resolved' && (i.severity === 'SEV-0' || i.severity === 'SEV-1')).length}
           unit="SEV-1 Critical"
-          change="1 Active"
+          change="Active Queue"
           changeType="negative"
           statusColor="red"
           annotation="auth-gateway-prod"
@@ -79,31 +79,29 @@ export const TriageView: React.FC<TriageViewProps> = ({
         />
       </div>
 
-      {/* Control Bar: Filters & Declare Incident CTA */}
-      <div className="bg-[#111827] border border-[#374151] rounded-lg p-4 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4">
-        <div className="flex flex-wrap items-center gap-3">
-          {/* Search box */}
-          <div className="relative flex items-center">
-            <Search className="w-3.5 h-3.5 text-[#6B7280] absolute left-3 pointer-events-none" />
+      {/* Control Bar */}
+      <div className="neu-surface rounded-2xl p-4 sm:p-5 flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4">
+        <div className="flex flex-wrap items-center gap-3 min-w-0">
+          <div className="relative flex items-center w-full sm:w-auto">
+            <Search className="w-3.5 h-3.5 text-[var(--ip-text-muted)] absolute left-3 pointer-events-none" />
             <input
               type="text"
               placeholder="Search code, service, or commander..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="bg-[#080C13] border border-[#374151] focus:border-[#3B82F6] text-[#F9FAFB] text-xs font-mono pl-8 pr-3 py-1.5 rounded outline-none placeholder-[#4B5563] w-64 transition-colors"
+              className="neu-inset focus:border-[#3B82F6]/50 text-[var(--ip-text)] text-xs font-mono pl-8 pr-3 py-2 rounded-xl outline-none placeholder-[var(--ip-text-muted)] w-full sm:w-64 transition-colors"
             />
           </div>
 
-          {/* Severity selector */}
-          <div className="flex items-center bg-[#080C13] border border-[#374151] rounded p-0.5 text-xs font-mono">
+          <div className="flex items-center neu-inset rounded-xl p-1 text-xs font-mono overflow-x-auto max-w-full">
             {['ALL', 'SEV-0', 'SEV-1', 'SEV-2'].map((sev) => (
               <button
                 key={sev}
                 onClick={() => setSeverityFilter(sev)}
-                className={`px-2.5 py-1 rounded transition-colors cursor-pointer text-[11px] ${
+                className={`px-2.5 py-1 rounded-lg transition-colors cursor-pointer text-[11px] shrink-0 ${
                   severityFilter === sev
-                    ? 'bg-[#1F2937] text-white font-semibold'
-                    : 'text-[#9CA3AF] hover:text-white'
+                    ? 'neu-pill text-[var(--ip-text)] font-semibold'
+                    : 'text-[var(--ip-text-secondary)] hover:text-[var(--ip-text)]'
                 }`}
               >
                 {sev}
@@ -111,16 +109,15 @@ export const TriageView: React.FC<TriageViewProps> = ({
             ))}
           </div>
 
-          {/* Status selector */}
-          <div className="flex items-center bg-[#080C13] border border-[#374151] rounded p-0.5 text-xs font-mono">
+          <div className="flex items-center neu-inset rounded-xl p-1 text-xs font-mono overflow-x-auto max-w-full">
             {['ALL', 'mitigating', 'investigating', 'resolved'].map((st) => (
               <button
                 key={st}
                 onClick={() => setStatusFilter(st)}
-                className={`px-2.5 py-1 rounded transition-colors cursor-pointer text-[11px] capitalize ${
+                className={`px-2.5 py-1 rounded-lg transition-colors cursor-pointer text-[11px] capitalize shrink-0 ${
                   statusFilter === st
-                    ? 'bg-[#1F2937] text-white font-semibold'
-                    : 'text-[#9CA3AF] hover:text-white'
+                    ? 'neu-pill text-[var(--ip-text)] font-semibold'
+                    : 'text-[var(--ip-text-secondary)] hover:text-[var(--ip-text)]'
                 }`}
               >
                 {st}
@@ -129,8 +126,7 @@ export const TriageView: React.FC<TriageViewProps> = ({
           </div>
         </div>
 
-        {/* Declare Incident CTA */}
-        <div className="flex items-center justify-end gap-2">
+        <div className="flex items-center justify-end gap-2 shrink-0">
           <Button
             variant="destructive"
             size="md"
@@ -142,26 +138,26 @@ export const TriageView: React.FC<TriageViewProps> = ({
         </div>
       </div>
 
-      {/* Incident Triage List Table */}
-      <div className="bg-[#111827] border border-[#374151] rounded-lg overflow-hidden">
+      {/* Incident Table */}
+      <div className="neu-surface rounded-2xl overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs font-mono border-collapse">
             <thead>
-              <tr className="bg-[#151C27] border-b border-[#374151] text-[#6B7280] uppercase text-[11px]">
-                <th className="py-3 px-4 w-[110px]">INCIDENT</th>
-                <th className="py-3 px-4 w-[100px]">SEVERITY</th>
-                <th className="py-3 px-4">TITLE & IMPACT</th>
-                <th className="py-3 px-4 w-[160px]">SERVICE</th>
-                <th className="py-3 px-4 w-[170px]">COMMANDER</th>
-                <th className="py-3 px-4 w-[110px]">DURATION</th>
-                <th className="py-3 px-4 w-[100px]">STATUS</th>
-                <th className="py-3 px-4 w-[130px] text-right">ACTION</th>
+              <tr className="bg-[var(--ip-surface-alt)] border-b border-[var(--ip-border)] text-[var(--ip-text-muted)] uppercase text-[11px]">
+                <th className="py-3.5 px-4 w-[110px]">INCIDENT</th>
+                <th className="py-3.5 px-4 w-[100px]">SEVERITY</th>
+                <th className="py-3.5 px-4">TITLE & IMPACT</th>
+                <th className="py-3.5 px-4 w-[160px]">SERVICE</th>
+                <th className="py-3.5 px-4 w-[170px]">COMMANDER</th>
+                <th className="py-3.5 px-4 w-[110px]">DURATION</th>
+                <th className="py-3.5 px-4 w-[100px]">STATUS</th>
+                <th className="py-3.5 px-4 w-[130px] text-right">ACTION</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-[#1F2937]">
+            <tbody className="divide-y divide-[var(--ip-border)]">
               {filteredIncidents.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="py-8 text-center text-[#6B7280]">
+                  <td colSpan={8} className="py-8 text-center text-[var(--ip-text-muted)]">
                     No incident records match the active criteria.
                   </td>
                 </tr>
@@ -173,20 +169,16 @@ export const TriageView: React.FC<TriageViewProps> = ({
                   return (
                     <tr
                       key={inc.id}
-                      className="hover:bg-[#1F2937]/70 transition-colors group cursor-default"
+                      className="hover:bg-[var(--ip-pill)]/40 transition-colors group cursor-default"
                     >
-                      <td className="py-3.5 px-4 font-semibold text-[#60A5FA]">
+                      <td className="py-3.5 px-4 font-semibold text-[#2563EB] dark:text-[#60A5FA]">
                         {inc.code}
                       </td>
 
                       <td className="py-3.5 px-4">
                         <Badge
                           variant={
-                            isResolved
-                              ? 'healthy'
-                              : isSev0or1
-                              ? 'critical'
-                              : 'warning'
+                            isResolved ? 'healthy' : isSev0or1 ? 'critical' : 'warning'
                           }
                           showSquare={!isResolved}
                         >
@@ -195,16 +187,16 @@ export const TriageView: React.FC<TriageViewProps> = ({
                       </td>
 
                       <td className="py-3.5 px-4">
-                        <div className="font-sans font-medium text-sm text-[#F9FAFB] line-clamp-1">
+                        <div className="font-sans font-medium text-sm text-[var(--ip-text)] line-clamp-1">
                           {inc.title}
                         </div>
-                        <div className="text-[11px] text-[#9CA3AF] line-clamp-1 mt-0.5">
+                        <div className="text-[11px] text-[var(--ip-text-secondary)] line-clamp-1 mt-0.5">
                           {inc.impactSummary}
                         </div>
                       </td>
 
-                      <td className="py-3.5 px-4 text-[#DCE2F3]">
-                        <span className="bg-[#080C13] border border-[#1F2937] px-2 py-0.5 rounded text-[11px]">
+                      <td className="py-3.5 px-4 text-[var(--ip-text)]">
+                        <span className="neu-inset px-2 py-0.5 rounded-md text-[11px] text-[var(--ip-text-secondary)]">
                           {inc.service}
                         </span>
                       </td>
@@ -214,16 +206,16 @@ export const TriageView: React.FC<TriageViewProps> = ({
                           <img
                             src={inc.commander.avatar}
                             alt={inc.commander.name}
-                            className="w-5 h-5 rounded object-cover border border-[#374151]"
+                            className="w-5 h-5 rounded-md object-cover border border-[var(--ip-border-strong)]"
                             referrerPolicy="no-referrer"
                           />
-                          <span className="text-[#DCE2F3] truncate max-w-[120px]">
+                          <span className="text-[var(--ip-text)] truncate max-w-[120px]">
                             {inc.commander.name}
                           </span>
                         </div>
                       </td>
 
-                      <td className="py-3.5 px-4 text-[#9CA3AF] tabular-nums">
+                      <td className="py-3.5 px-4 text-[var(--ip-text-secondary)] tabular-nums">
                         {inc.durationMinutes}m elapsed
                       </td>
 
@@ -231,10 +223,10 @@ export const TriageView: React.FC<TriageViewProps> = ({
                         <span
                           className={`text-[11px] uppercase font-semibold ${
                             isResolved
-                              ? 'text-[#34D399]'
+                              ? 'text-[#047857] dark:text-[#6EE7B7]'
                               : inc.status === 'mitigating'
-                              ? 'text-[#60A5FA]'
-                              : 'text-[#FBBF24]'
+                              ? 'text-[#2563EB] dark:text-[#93C5FD]'
+                              : 'text-[#B45309] dark:text-[#FCD34D]'
                           }`}
                         >
                           {inc.status}

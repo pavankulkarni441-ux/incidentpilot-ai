@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Incident, AiHypothesis, N8nWorkflowResponse } from '../../types/incident';
+import { Incident, AiHypothesis, N8nWorkflowResponse, AuditEvent } from '../../types/incident';
 import { Button } from '../ui/Button';
 import {
   Terminal,
@@ -11,7 +11,6 @@ import {
   ShieldAlert,
   Clock,
   RotateCcw,
-  ExternalLink,
   BookOpen,
 } from 'lucide-react';
 
@@ -23,9 +22,11 @@ interface ExecutionTerminalModalProps {
   incident: Incident;
   hypothesis: AiHypothesis;
   onOpenSetupGuide?: () => void;
+  onAuditEventRecorded?: (event: AuditEvent) => void;
 }
 
 type ExecutionPhase = 'authorizing' | 'dispatching' | 'success' | 'rejected' | 'timeout' | 'error' | 'not_configured';
+type WorkflowEngine = 'nodejs' | 'n8n';
 
 interface TerminalLine {
   timestamp: string;
@@ -41,7 +42,9 @@ export const ExecutionTerminalModal: React.FC<ExecutionTerminalModalProps> = ({
   incident,
   hypothesis,
   onOpenSetupGuide,
+  onAuditEventRecorded,
 }) => {
+  const [engine, setEngine] = useState<WorkflowEngine>('nodejs');
   const [phase, setPhase] = useState<ExecutionPhase>('authorizing');
   const [lines, setLines] = useState<TerminalLine[]>([]);
   const [n8nResult, setN8nResult] = useState<N8nWorkflowResponse | null>(null);
@@ -53,7 +56,169 @@ export const ExecutionTerminalModal: React.FC<ExecutionTerminalModalProps> = ({
     setLines((prev) => [...prev, { timestamp: time, type, text }]);
   };
 
-  const dispatchApproval = async (forceSimulationFalse = false) => {
+  const dispatchNodejsWorkflow = async (forceSimulationFalse = false) => {
+    const incidentId = incident.code || incident.id;
+    setCurrentApprovalId('');
+    setPhase('dispatching');
+    setErrorMessage(null);
+    setN8nResult(null);
+
+    const tsNow = new Date().toTimeString().split(' ')[0];
+    setLines([
+      {
+        timestamp: tsNow,
+        type: 'info',
+        text: `[AUTH] Incident Commander authorization signed: ${incident.commander.name} (${incident.commander.role})`,
+      },
+      {
+        timestamp: tsNow,
+        type: forceSimulationFalse ? 'warn' : 'info',
+        text: `[POLICY] Checking safety mode: simulation_mode=${forceSimulationFalse ? 'false (Testing Rejection)' : 'true (Simulated Remediation)'}`,
+      },
+      {
+        timestamp: tsNow,
+        type: 'dim',
+        text: `[ORCHESTRATOR] POST /api/workflows/incidents/start -> incident: ${incidentId}, service: ${incident.service}`,
+      },
+    ]);
+
+    try {
+      const startRes = await fetch('/api/workflows/incidents/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          incident_id: incidentId,
+          severity: incident.severity,
+          service: incident.service,
+          alert: {
+            title: incident.title,
+            severity: incident.severity,
+            service: incident.service,
+            impactSummary: incident.impactSummary,
+            p99LatencyMs: incident.p99LatencyMs,
+            errorRatePercent: incident.errorRatePercent,
+          },
+          simulation_mode: !forceSimulationFalse,
+          notify_slack: true,
+        }),
+      });
+
+      const startData = await startRes.json();
+      let approvalId = startData.approval_id || '';
+      let proposedAction = startData.workflow?.proposed_action || 'scale_connection_pool_canary';
+
+      if (startRes.status === 409 && startData.code === 'DUPLICATE_INCIDENT_WORKFLOW') {
+        const existing = startData.existing_workflow;
+        if (existing?.phase === 'awaiting_human_approval' && existing.approval_id) {
+          approvalId = existing.approval_id;
+          proposedAction = existing.proposed_action || proposedAction;
+          addLine(
+            `[ORCHESTRATOR] Active workflow ${existing.workflow_id} awaiting approval (${approvalId}). Proceeding with bound decision...`,
+            'info'
+          );
+        } else {
+          setPhase('rejected');
+          setErrorMessage(startData.error);
+          addLine(`[HTTP 409 DUPLICATE_INCIDENT_WORKFLOW] ${startData.error}`, 'error');
+          return;
+        }
+      } else if (!startRes.ok) {
+        if (startRes.status === 400 || startRes.status === 403) {
+          setPhase('rejected');
+          setErrorMessage(startData.error || 'Workflow rejected by orchestrator safety policy.');
+          addLine(`[HTTP ${startRes.status}] ${startData.error || 'Validation error'}`, 'error');
+        } else {
+          setPhase('error');
+          setErrorMessage(startData.error || `Workflow start failed (HTTP ${startRes.status})`);
+          addLine(`[HTTP ${startRes.status}] ${startData.error || 'Workflow error'}`, 'error');
+        }
+        return;
+      } else {
+        addLine(
+          `[CLAUDE] Diagnosis completed (source=${startData.workflow?.diagnosis_source}, confidence=${startData.workflow?.diagnosis?.confidence ?? 'N/A'}%)`,
+          'info'
+        );
+        addLine(
+          `[SLACK] Notification status: ${startData.workflow?.slack_status || 'unknown'}`,
+          startData.workflow?.slack_notified ? 'success' : 'dim'
+        );
+        addLine(
+          `[APPROVAL] Issued bound single-use approval ${approvalId} for action="${proposedAction}"`,
+          'info'
+        );
+      }
+
+      setCurrentApprovalId(approvalId);
+      addLine(
+        `[DECISION] POST /api/workflows/incidents/${incidentId}/decision -> action: ${proposedAction}`,
+        'dim'
+      );
+
+      const decisionRes = await fetch(`/api/workflows/incidents/${encodeURIComponent(incidentId)}/decision`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          approval_id: approvalId,
+          action: proposedAction,
+          decision: 'approve',
+          simulation_mode: !forceSimulationFalse,
+          human_approval: {
+            approved: true,
+            commander_name: incident.commander.name,
+            commander_id: 's-chen-882',
+            commander_role: incident.commander.role,
+            timestamp: new Date().toISOString(),
+          },
+        }),
+      });
+
+      const decisionData = await decisionRes.json();
+
+      if (decisionRes.status === 200 && decisionData.success) {
+        const resultPayload: N8nWorkflowResponse = {
+          success: true,
+          incident_id: incidentId,
+          approval_id: decisionData.approval_id,
+          workflow_status: decisionData.workflow_status,
+          result_message: decisionData.result_message,
+          execution_timestamp: decisionData.execution_timestamp,
+          raw: {
+            engine: 'nodejs_express_native',
+            workflow: decisionData.workflow,
+          },
+        };
+        setPhase('success');
+        setN8nResult(resultPayload);
+        if (decisionData.audit_event && onAuditEventRecorded) {
+          onAuditEventRecorded(decisionData.audit_event);
+        }
+        addLine(`[HTTP 200] Node.js workflow execution verified (simulation_mode=true).`, 'success');
+        addLine(`[ORCHESTRATOR] workflow_status: "${decisionData.workflow_status}"`, 'success');
+        addLine(`[ORCHESTRATOR] result_message: "${decisionData.result_message}"`, 'success');
+        addLine(`[ORCHESTRATOR] execution_timestamp: ${decisionData.execution_timestamp}`, 'info');
+      } else if (
+        decisionRes.status === 400 ||
+        decisionRes.status === 403 ||
+        decisionRes.status === 409 ||
+        decisionRes.status === 410
+      ) {
+        setPhase('rejected');
+        setErrorMessage(decisionData.error || 'Decision rejected by Node.js orchestrator.');
+        addLine(`[HTTP ${decisionRes.status}] Decision rejected: ${decisionData.error || 'Policy violation'}`, 'error');
+      } else {
+        setPhase('error');
+        setErrorMessage(decisionData.error || `Server returned HTTP ${decisionRes.status}`);
+        addLine(`[HTTP ${decisionRes.status}] ${decisionData.error || 'Unexpected error'}`, 'error');
+      }
+    } catch (err: any) {
+      setPhase('error');
+      const msg = err.message || 'Failed to reach Node.js orchestrator';
+      setErrorMessage(msg);
+      addLine(`[NETWORK ERROR] ${msg}`, 'error');
+    }
+  };
+
+  const dispatchLegacyN8n = async (forceSimulationFalse = false) => {
     const approvalId = `appr-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`;
     setCurrentApprovalId(approvalId);
     setPhase('dispatching');
@@ -145,59 +310,68 @@ export const ExecutionTerminalModal: React.FC<ExecutionTerminalModalProps> = ({
     }
   };
 
+  const dispatchApproval = (forceSimulationFalse = false, targetEngine: WorkflowEngine = engine) => {
+    if (targetEngine === 'nodejs') {
+      return dispatchNodejsWorkflow(forceSimulationFalse);
+    }
+    return dispatchLegacyN8n(forceSimulationFalse);
+  };
+
   useEffect(() => {
     if (isOpen) {
-      dispatchApproval(false);
+      dispatchApproval(false, engine);
     }
   }, [isOpen]);
 
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#070e19]/85 backdrop-blur-xs p-4">
-      <div className="bg-[#111827] border border-[#374151] rounded-xl w-full max-w-3xl overflow-hidden shadow-2xl flex flex-col">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4">
+      <div className="neu-surface rounded-2xl w-full max-w-3xl overflow-hidden flex flex-col">
         {/* Terminal Header */}
-        <div className="bg-[#151C27] border-b border-[#374151] px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Terminal className="w-4 h-4 text-[#3B82F6]" />
-            <span className="text-xs font-mono font-semibold text-[#DCE2F3]">
-              N8N SECURE WEBHOOK DISPATCH • INCIDENT REMEDIATION
+        <div className="border-b border-[var(--ip-border)] px-5 py-3.5 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <Terminal className="w-4 h-4 text-[#3B82F6] dark:text-[#60A5FA] shrink-0" />
+            <span className="text-xs font-mono font-semibold text-[var(--ip-text)] truncate">
+              {engine === 'nodejs'
+                ? 'NODE.JS WORKFLOW ORCHESTRATOR · INCIDENT REMEDIATION'
+                : 'N8N LEGACY WEBHOOK DISPATCH · INCIDENT REMEDIATION'}
             </span>
           </div>
 
-          <div className="flex items-center gap-2 text-xs font-mono">
+          <div className="flex items-center gap-2 text-xs font-mono shrink-0">
             {phase === 'dispatching' && (
-              <span className="flex items-center gap-1.5 text-[#60A5FA]">
+              <span className="flex items-center gap-1.5 text-[#2563EB] dark:text-[#93C5FD]">
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                DISPATCHING WEBHOOK...
+                {engine === 'nodejs' ? 'EXECUTING WORKFLOW...' : 'DISPATCHING WEBHOOK...'}
               </span>
             )}
             {phase === 'success' && (
-              <span className="flex items-center gap-1.5 text-[#34D399]">
+              <span className="flex items-center gap-1.5 text-[#047857] dark:text-[#6EE7B7]">
                 <CheckCircle2 className="w-3.5 h-3.5" />
                 WORKFLOW VERIFIED (HTTP 200)
               </span>
             )}
             {phase === 'rejected' && (
-              <span className="flex items-center gap-1.5 text-[#F87171]">
+              <span className="flex items-center gap-1.5 text-[#DC2626] dark:text-[#FCA5A5]">
                 <ShieldAlert className="w-3.5 h-3.5" />
                 ACTION REJECTED
               </span>
             )}
             {phase === 'not_configured' && (
-              <span className="flex items-center gap-1.5 text-[#FBBF24]">
+              <span className="flex items-center gap-1.5 text-[#B45309] dark:text-[#FCD34D]">
                 <AlertTriangle className="w-3.5 h-3.5" />
                 SECRET MISSING
               </span>
             )}
             {phase === 'timeout' && (
-              <span className="flex items-center gap-1.5 text-[#F87171]">
+              <span className="flex items-center gap-1.5 text-[#DC2626] dark:text-[#FCA5A5]">
                 <Clock className="w-3.5 h-3.5" />
                 TIMED OUT (10s)
               </span>
             )}
             {phase === 'error' && (
-              <span className="flex items-center gap-1.5 text-[#F87171]">
+              <span className="flex items-center gap-1.5 text-[#DC2626] dark:text-[#FCA5A5]">
                 <ShieldAlert className="w-3.5 h-3.5" />
                 DISPATCH FAILED
               </span>
@@ -206,66 +380,104 @@ export const ExecutionTerminalModal: React.FC<ExecutionTerminalModalProps> = ({
         </div>
 
         {/* Security & Context Sub-bar */}
-        <div className="bg-[#0B0F17] border-b border-[#1F2937] px-4 py-2 flex flex-wrap items-center justify-between text-[11px] font-mono text-[#9CA3AF] gap-2">
+        <div className="bg-[var(--ip-surface-alt)] border-b border-[var(--ip-border)] px-5 py-2.5 flex flex-wrap items-center justify-between text-[11px] font-mono text-[var(--ip-text-secondary)] gap-2">
           <div className="flex items-center gap-2">
-            <ShieldCheck className="w-3.5 h-3.5 text-[#34D399]" />
-            <span>Human Authorized by: <strong className="text-[#DCE2F3]">{incident.commander.name}</strong></span>
+            <ShieldCheck className="w-3.5 h-3.5 text-[#047857] dark:text-[#6EE7B7]" />
+            <span>
+              Human Authorized by: <strong className="text-[var(--ip-text)]">{incident.commander.name}</strong>
+            </span>
           </div>
-          <div className="flex items-center gap-3">
-            <span>Approval ID: <strong className="text-[#60A5FA]">{currentApprovalId || '—'}</strong></span>
-            <span>•</span>
-            <span className="text-[#34D399]">simulation_mode=true</span>
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-1 neu-inset rounded-lg p-0.5">
+              <button
+                type="button"
+                disabled={phase === 'dispatching'}
+                onClick={() => {
+                  setEngine('nodejs');
+                  dispatchApproval(false, 'nodejs');
+                }}
+                className={`px-2 py-0.5 rounded-md text-[10px] cursor-pointer transition-colors ${
+                  engine === 'nodejs' ? 'neu-pill text-[var(--ip-text)] font-medium' : 'text-[var(--ip-text-secondary)] hover:text-[var(--ip-text)]'
+                }`}
+              >
+                Node.js Orchestrator
+              </button>
+              <button
+                type="button"
+                disabled={phase === 'dispatching'}
+                onClick={() => {
+                  setEngine('n8n');
+                  dispatchApproval(false, 'n8n');
+                }}
+                className={`px-2 py-0.5 rounded-md text-[10px] cursor-pointer transition-colors ${
+                  engine === 'n8n' ? 'neu-pill text-[var(--ip-text)] font-medium' : 'text-[var(--ip-text-secondary)] hover:text-[var(--ip-text)]'
+                }`}
+              >
+                n8n (Legacy)
+              </button>
+            </div>
+            <span>
+              Approval ID: <strong className="text-[#2563EB] dark:text-[#93C5FD]">{currentApprovalId || '—'}</strong>
+            </span>
+            <span className="text-[var(--ip-text-muted)]">·</span>
+            <span className="text-[#047857] dark:text-[#6EE7B7]">simulation_mode=true</span>
           </div>
         </div>
 
         {/* Terminal Output Body */}
-        <div className="p-4 bg-[#080C13] font-mono text-xs space-y-2 max-h-[340px] min-h-[220px] overflow-y-auto">
+        <div className="p-5 bg-[var(--ip-inset)] font-mono text-xs space-y-2 max-h-[340px] min-h-[220px] overflow-y-auto">
           {lines.map((l, idx) => {
             const colorClass =
               l.type === 'success'
-                ? 'text-[#34D399]'
+                ? 'text-[#047857] dark:text-[#6EE7B7]'
                 : l.type === 'error'
-                ? 'text-[#F87171]'
+                ? 'text-[#DC2626] dark:text-[#FCA5A5]'
                 : l.type === 'warn'
-                ? 'text-[#FBBF24]'
+                ? 'text-[#B45309] dark:text-[#FCD34D]'
                 : l.type === 'dim'
-                ? 'text-[#6B7280]'
-                : 'text-[#DCE2F3]';
+                ? 'text-[var(--ip-text-muted)]'
+                : 'text-[var(--ip-text)]';
 
             return (
               <div key={idx} className="flex items-start gap-2.5 leading-relaxed">
-                <span className="text-[#4B5563] text-[10px] tabular-nums shrink-0 pt-0.5">
+                <span className="text-[var(--ip-text-muted)] text-[10px] tabular-nums shrink-0 pt-0.5">
                   {l.timestamp}
                 </span>
-                <span className={`${colorClass} break-all`}>{l.text}</span>
+                <span className={`${colorClass} break-words`}>{l.text}</span>
               </div>
             );
           })}
 
           {phase === 'dispatching' && (
-            <div className="flex items-center gap-2 text-[#60A5FA] pt-2">
+            <div className="flex items-center gap-2 text-[#2563EB] dark:text-[#93C5FD] pt-2">
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              <span>Waiting for n8n production workflow HTTP response...</span>
+              <span>
+                {engine === 'nodejs'
+                  ? 'Executing Node.js incident workflow & safety checks...'
+                  : 'Waiting for n8n production workflow HTTP response...'}
+              </span>
             </div>
           )}
         </div>
 
         {/* Result & Guidance Callouts */}
         {phase === 'not_configured' && (
-          <div className="bg-[#1C1814] border-t border-[#F59E0B]/40 p-4 font-mono text-xs text-[#FBBF24] flex items-start gap-3">
+          <div className="bg-[#F59E0B]/10 border-t border-[#F59E0B]/25 p-4 font-mono text-xs text-[#B45309] dark:text-[#FCD34D] flex items-start gap-3">
             <AlertTriangle className="w-5 h-5 text-[#F59E0B] shrink-0 mt-0.5" />
             <div className="space-y-1 flex-1">
-              <div className="font-semibold text-[#FDE68A]">
+              <div className="font-semibold">
                 N8N_WEBHOOK_URL Not Configured in Server Environment
               </div>
-              <p className="text-[11px] text-[#FBBF24]/90 font-sans leading-relaxed">
-                The backend safely prevented execution because the server-side environment variable <code className="bg-[#080C13] px-1.5 py-0.5 rounded text-[#DCE2F3]">N8N_WEBHOOK_URL</code> is not set. Add it in AI Studio Secrets or your deployment configuration.
+              <p className="text-[11px] font-sans leading-relaxed">
+                The backend safely prevented execution because the server-side environment variable{' '}
+                <code className="neu-inset px-1.5 py-0.5 rounded text-[var(--ip-text)]">N8N_WEBHOOK_URL</code> is not set.
+                Add it in AI Studio Secrets or switch to the native Node.js Orchestrator above.
               </p>
               {onOpenSetupGuide && (
                 <div className="pt-2">
                   <button
                     onClick={onOpenSetupGuide}
-                    className="text-xs text-[#60A5FA] underline hover:text-white flex items-center gap-1 cursor-pointer"
+                    className="text-xs text-[#2563EB] dark:text-[#93C5FD] underline hover:opacity-80 flex items-center gap-1 cursor-pointer"
                   >
                     <BookOpen className="w-3.5 h-3.5" />
                     Open N8N Configuration Setup Guide
@@ -277,11 +489,11 @@ export const ExecutionTerminalModal: React.FC<ExecutionTerminalModalProps> = ({
         )}
 
         {phase === 'rejected' && (
-          <div className="bg-[#181214] border-t border-[#EF4444]/40 p-4 font-mono text-xs text-[#F87171] flex items-start gap-3">
+          <div className="bg-[#EF4444]/10 border-t border-[#EF4444]/25 p-4 font-mono text-xs text-[#DC2626] dark:text-[#FCA5A5] flex items-start gap-3">
             <ShieldAlert className="w-5 h-5 text-[#EF4444] shrink-0 mt-0.5" />
             <div className="space-y-1">
-              <div className="font-semibold text-[#FCA5A5]">Action Rejection Enforced</div>
-              <p className="text-[11px] text-[#F87171]/90 font-sans leading-relaxed">
+              <div className="font-semibold">Action Rejection Enforced</div>
+              <p className="text-[11px] font-sans leading-relaxed">
                 {errorMessage || 'The request was rejected according to the workflow validation rules.'}
               </p>
             </div>
@@ -289,11 +501,11 @@ export const ExecutionTerminalModal: React.FC<ExecutionTerminalModalProps> = ({
         )}
 
         {phase === 'timeout' && (
-          <div className="bg-[#181214] border-t border-[#EF4444]/40 p-4 font-mono text-xs text-[#F87171] flex items-start gap-3">
+          <div className="bg-[#EF4444]/10 border-t border-[#EF4444]/25 p-4 font-mono text-xs text-[#DC2626] dark:text-[#FCA5A5] flex items-start gap-3">
             <Clock className="w-5 h-5 text-[#EF4444] shrink-0 mt-0.5" />
             <div className="space-y-1">
-              <div className="font-semibold text-[#FCA5A5]">Webhook Timed Out (10s)</div>
-              <p className="text-[11px] text-[#F87171]/90 font-sans leading-relaxed">
+              <div className="font-semibold">Webhook Timed Out (10s)</div>
+              <p className="text-[11px] font-sans leading-relaxed">
                 The n8n webhook did not respond within the 10-second timeout window. Verify that your n8n server is online and reachable from the server.
               </p>
             </div>
@@ -301,13 +513,12 @@ export const ExecutionTerminalModal: React.FC<ExecutionTerminalModalProps> = ({
         )}
 
         {/* Footer with Controls */}
-        <div className="bg-[#151C27] border-t border-[#374151] px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+        <div className="border-t border-[var(--ip-border)] px-5 py-3.5 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
-            {/* Test Rejection button to verify requirement: simulation_mode=false is rejected with 400 */}
             <button
               onClick={() => dispatchApproval(true)}
               disabled={phase === 'dispatching'}
-              className="text-[11px] font-mono text-[#9CA3AF] hover:text-[#F87171] transition-colors flex items-center gap-1 cursor-pointer disabled:opacity-50"
+              className="text-[11px] font-mono text-[var(--ip-text-secondary)] hover:text-[#DC2626] dark:hover:text-[#FCA5A5] transition-colors flex items-center gap-1 cursor-pointer disabled:opacity-50"
               title="Test rejection policy: sends simulation_mode=false to verify HTTP 400 rejection"
             >
               <span>Test Rejection (simulation_mode=false)</span>
@@ -350,3 +561,4 @@ export const ExecutionTerminalModal: React.FC<ExecutionTerminalModalProps> = ({
     </div>
   );
 };
+

@@ -1,8 +1,7 @@
 import React, { useState } from 'react';
 import { Incident, SeverityLevel } from '../types/incident';
 import { Button } from './ui/Button';
-import { Badge } from './ui/Badge';
-import { X, ShieldAlert, AlertTriangle } from 'lucide-react';
+import { X, ShieldAlert } from 'lucide-react';
 
 interface DeclareIncidentModalProps {
   isOpen: boolean;
@@ -51,25 +50,23 @@ export const DeclareIncidentModal: React.FC<DeclareIncidentModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#070e19]/80 backdrop-blur-xs p-4">
-      <div className="bg-[#111827] border border-[#374151] rounded-xl w-full max-w-lg overflow-hidden shadow-2xl flex flex-col animate-in fade-in zoom-in-95 duration-150">
-        {/* Header */}
-        <div className="bg-[#151C27] border-b border-[#374151] px-5 py-3.5 flex items-center justify-between">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4">
+      <div className="neu-surface rounded-2xl w-full max-w-lg overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-150">
+        <div className="border-b border-[var(--ip-border)] px-5 py-3.5 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <ShieldAlert className="w-4 h-4 text-[#EF4444]" />
-            <span className="text-xs font-mono font-semibold text-[#DCE2F3]">
+            <span className="text-xs font-mono font-semibold text-[var(--ip-text)]">
               DECLARE NEW PRODUCTION INCIDENT
             </span>
           </div>
-          <button onClick={onClose} className="text-[#9CA3AF] hover:text-white cursor-pointer">
+          <button onClick={onClose} className="text-[var(--ip-text-secondary)] hover:text-[var(--ip-text)] cursor-pointer">
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        {/* Form Body */}
         <form onSubmit={handleSubmit} className="p-5 space-y-4 font-mono text-xs">
           <div>
-            <label className="text-[11px] text-[#9CA3AF] block mb-1">
+            <label className="text-[11px] text-[var(--ip-text-secondary)] block mb-1.5">
               Incident Severity Level
             </label>
             <div className="grid grid-cols-3 gap-2">
@@ -78,14 +75,12 @@ export const DeclareIncidentModal: React.FC<DeclareIncidentModalProps> = ({
                   type="button"
                   key={sev}
                   onClick={() => setSeverity(sev)}
-                  className={`py-2 px-3 rounded border text-center font-bold cursor-pointer transition-all ${
+                  className={`py-2 px-3 rounded-xl border text-center font-bold cursor-pointer transition-all ${
                     severity === sev
-                      ? sev === 'SEV-0'
-                        ? 'bg-red-950 border-[#EF4444] text-[#F87171]'
-                        : sev === 'SEV-1'
-                        ? 'bg-red-950/70 border-[#EF4444]/80 text-[#F87171]'
-                        : 'bg-amber-950 border-[#F59E0B] text-[#FBBF24]'
-                      : 'bg-[#080C13] border-[#1F2937] text-[#9CA3AF] hover:border-[#374151]'
+                      ? sev === 'SEV-0' || sev === 'SEV-1'
+                        ? 'bg-[#EF4444]/15 border-[#EF4444]/40 text-[#DC2626] dark:text-[#FCA5A5]'
+                        : 'bg-[#F59E0B]/15 border-[#F59E0B]/40 text-[#B45309] dark:text-[#FCD34D]'
+                      : 'neu-inset text-[var(--ip-text-secondary)] hover:text-[var(--ip-text)]'
                   }`}
                 >
                   {sev}
@@ -95,7 +90,7 @@ export const DeclareIncidentModal: React.FC<DeclareIncidentModalProps> = ({
           </div>
 
           <div>
-            <label className="text-[11px] text-[#9CA3AF] block mb-1">
+            <label className="text-[11px] text-[var(--ip-text-secondary)] block mb-1.5">
               Incident Title / Headline Summary
             </label>
             <input
@@ -104,19 +99,19 @@ export const DeclareIncidentModal: React.FC<DeclareIncidentModalProps> = ({
               placeholder="e.g. Memory leak causing crash back-off in checkout-api"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              className="w-full bg-[#080C13] border border-[#374151] focus:border-[#3B82F6] text-[#F9FAFB] p-2.5 rounded outline-none"
+              className="w-full neu-inset focus:border-[#3B82F6]/50 text-[var(--ip-text)] p-2.5 rounded-xl outline-none placeholder-[var(--ip-text-muted)]"
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="text-[11px] text-[#9CA3AF] block mb-1">
+              <label className="text-[11px] text-[var(--ip-text-secondary)] block mb-1.5">
                 Affected Target Service
               </label>
               <select
                 value={service}
                 onChange={(e) => setService(e.target.value)}
-                className="w-full bg-[#080C13] border border-[#374151] focus:border-[#3B82F6] text-[#F9FAFB] p-2.5 rounded outline-none"
+                className="w-full neu-inset focus:border-[#3B82F6]/50 text-[var(--ip-text)] p-2.5 rounded-xl outline-none"
               >
                 <option value="auth-gateway-prod">auth-gateway-prod</option>
                 <option value="checkout-api">checkout-api</option>
@@ -127,20 +122,20 @@ export const DeclareIncidentModal: React.FC<DeclareIncidentModalProps> = ({
             </div>
 
             <div>
-              <label className="text-[11px] text-[#9CA3AF] block mb-1">
+              <label className="text-[11px] text-[var(--ip-text-secondary)] block mb-1.5">
                 Blast Radius Scope
               </label>
               <input
                 type="text"
                 value={blastRadius}
                 onChange={(e) => setBlastRadius(e.target.value)}
-                className="w-full bg-[#080C13] border border-[#374151] focus:border-[#3B82F6] text-[#F9FAFB] p-2.5 rounded outline-none"
+                className="w-full neu-inset focus:border-[#3B82F6]/50 text-[var(--ip-text)] p-2.5 rounded-xl outline-none"
               />
             </div>
           </div>
 
           <div>
-            <label className="text-[11px] text-[#9CA3AF] block mb-1">
+            <label className="text-[11px] text-[var(--ip-text-secondary)] block mb-1.5">
               Initial Impact Observation
             </label>
             <textarea
@@ -148,13 +143,12 @@ export const DeclareIncidentModal: React.FC<DeclareIncidentModalProps> = ({
               placeholder="Describe symptoms, customer impact, or anomalous alert monitors..."
               value={impactSummary}
               onChange={(e) => setImpactSummary(e.target.value)}
-              className="w-full bg-[#080C13] border border-[#374151] focus:border-[#3B82F6] text-[#F9FAFB] p-2.5 rounded outline-none resize-none font-sans"
+              className="w-full neu-inset focus:border-[#3B82F6]/50 text-[var(--ip-text)] p-2.5 rounded-xl outline-none resize-none font-sans placeholder-[var(--ip-text-muted)]"
             />
           </div>
 
-          {/* Footer actions */}
-          <div className="pt-3 border-t border-[#1F2937] flex items-center justify-between">
-            <span className="text-[10px] text-[#6B7280]">
+          <div className="pt-3 border-t border-[var(--ip-border)] flex flex-wrap items-center justify-between gap-2">
+            <span className="text-[10px] text-[var(--ip-text-muted)]">
               Dispatches automated PagerDuty alarm
             </span>
             <div className="flex items-center gap-2">

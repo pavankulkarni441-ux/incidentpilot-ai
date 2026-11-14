@@ -1,17 +1,109 @@
-import React, { useState } from 'react';
-import { TraceSpan } from '../../types/incident';
-import { Clock, AlertCircle, CheckCircle2, Database, Layers, Copy, Check } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { TraceSpan, TraceEvidenceSummary, DistributedTraceItem } from '../../types/incident';
+import { AlertCircle, CheckCircle2, Database, Layers, Copy, Check } from 'lucide-react';
 
 interface TraceWaterfallProps {
   spans: TraceSpan[];
+  traceEvidence?: TraceEvidenceSummary;
 }
 
-export const TraceWaterfall: React.FC<TraceWaterfallProps> = ({ spans }) => {
-  const [selectedSpan, setSelectedSpan] = useState<TraceSpan>(spans[0]?.children?.[0]?.children?.[0] || spans[0]);
+function buildSpanTreeFromDistributedTrace(trace: DistributedTraceItem): TraceSpan[] {
+  const rootStartMs = Date.parse(trace.start_time) || 0;
+  const nodeMap = new Map<string, TraceSpan>();
+
+  for (const sp of trace.spans) {
+    const startMs = Date.parse(sp.start_time);
+    const offsetMs = Number.isFinite(startMs) && Number.isFinite(rootStartMs) ? Math.max(0, startMs - rootStartMs) : 0;
+    const isSlow = sp.duration_ms >= trace.slow_threshold_ms;
+    const tags: Record<string, string> = {
+      trace_id: sp.trace_id,
+      span_id: sp.span_id,
+      parent_span_id: sp.parent_span_id || 'ROOT',
+      start_time: sp.start_time,
+      status: sp.status,
+      data_source: sp.data_source,
+      ...(isSlow ? { slow_span: `true (>=${trace.slow_threshold_ms}ms)` } : {}),
+      ...(sp.error_message ? { error_message: sp.error_message } : {}),
+    };
+
+    const isSql =
+      sp.service_name.includes('pg') ||
+      sp.service_name.includes('db') ||
+      /^\s*(SELECT|INSERT|UPDATE|DELETE)\b/i.test(sp.operation_name);
+
+    nodeMap.set(sp.span_id, {
+      id: sp.span_id,
+      serviceName: sp.service_name,
+      operationName: sp.operation_name,
+      durationMs: sp.duration_ms,
+      startOffsetMs: offsetMs,
+      statusCode: sp.status === 'ERROR' ? 500 : 200,
+      hasError: sp.status === 'ERROR',
+      tags,
+      ...(isSql ? { sqlQuery: sp.operation_name } : {}),
+      children: [],
+    });
+  }
+
+  const roots: TraceSpan[] = [];
+  for (const sp of trace.spans) {
+    const node = nodeMap.get(sp.span_id)!;
+    if (sp.parent_span_id && nodeMap.has(sp.parent_span_id)) {
+      nodeMap.get(sp.parent_span_id)!.children!.push(node);
+    } else {
+      roots.push(node);
+    }
+  }
+
+  return roots;
+}
+
+function findDefaultSelectedSpan(spans: TraceSpan[]): TraceSpan | null {
+  const flat: TraceSpan[] = [];
+  const walk = (list: TraceSpan[]) => {
+    for (const s of list) {
+      flat.push(s);
+      if (s.children?.length) walk(s.children);
+    }
+  };
+  walk(spans);
+  if (flat.length === 0) return null;
+  const leafError = [...flat].reverse().find((s) => s.hasError);
+  return leafError || flat[0];
+}
+
+export const TraceWaterfall: React.FC<TraceWaterfallProps> = ({ spans, traceEvidence }) => {
+  const [activeTraceIdx, setActiveTraceIdx] = useState(0);
   const [copiedQuery, setCopiedQuery] = useState(false);
   const [viewMode, setViewMode] = useState<'waterfall' | 'flame'>('waterfall');
 
-  const totalDuration = spans[0]?.durationMs || 1856;
+  const activeDistributedTrace: DistributedTraceItem | undefined =
+    traceEvidence?.available && traceEvidence.traces.length > 0
+      ? traceEvidence.traces[Math.min(activeTraceIdx, traceEvidence.traces.length - 1)]
+      : undefined;
+
+  const renderedSpans = useMemo<TraceSpan[]>(() => {
+    if (traceEvidence) {
+      if (!traceEvidence.available || !activeDistributedTrace) {
+        return [];
+      }
+      return buildSpanTreeFromDistributedTrace(activeDistributedTrace);
+    }
+    return spans;
+  }, [traceEvidence, activeDistributedTrace, spans]);
+
+  const [selectedSpan, setSelectedSpan] = useState<TraceSpan | null>(() => findDefaultSelectedSpan(renderedSpans));
+
+  useEffect(() => {
+    setSelectedSpan(findDefaultSelectedSpan(renderedSpans));
+  }, [renderedSpans]);
+
+  useEffect(() => {
+    setActiveTraceIdx(0);
+  }, [traceEvidence?.service]);
+
+  const totalDuration = activeDistributedTrace?.total_duration_ms || renderedSpans[0]?.durationMs || 0;
+  const displayTraceId = activeDistributedTrace?.trace_id || (traceEvidence ? 'N/A' : 'tr-8f4b1029-ee34');
 
   const copySql = (sql: string) => {
     navigator.clipboard.writeText(sql);
@@ -20,47 +112,50 @@ export const TraceWaterfall: React.FC<TraceWaterfallProps> = ({ spans }) => {
   };
 
   const renderSpanRow = (span: TraceSpan, depth = 0) => {
-    const leftPercent = (span.startOffsetMs / totalDuration) * 100;
-    const widthPercent = Math.max((span.durationMs / totalDuration) * 100, 2);
+    const safeTotal = Math.max(totalDuration, 1);
+    const leftPercent = Math.min((span.startOffsetMs / safeTotal) * 100, 96);
+    const widthPercent = Math.max(Math.min((span.durationMs / safeTotal) * 100, 100 - leftPercent), 2);
     const isSelected = selectedSpan?.id === span.id;
+    const isSlow = span.tags.slow_span !== undefined;
 
     return (
       <div key={span.id} className="group">
         <div
           onClick={() => setSelectedSpan(span)}
-          className={`flex items-center text-xs font-mono py-2 px-3 border-b border-[#1F2937] hover:bg-[#1F2937]/70 cursor-pointer transition-colors ${
-            isSelected ? 'bg-[#1F2937] border-l-2 border-l-[#3B82F6]' : ''
+          className={`flex items-center text-xs font-mono py-2.5 px-3 border-b border-[var(--ip-border)] hover:bg-[var(--ip-pill)]/50 cursor-pointer transition-colors ${
+            isSelected ? 'bg-[var(--ip-pill)] ring-1 ring-inset ring-[#3B82F6]/35' : ''
           }`}
         >
           {/* Service and operation name */}
           <div
-            className="w-[300px] shrink-0 truncate flex items-center gap-2"
-            style={{ paddingLeft: `${depth * 16}px` }}
+            className="w-[230px] sm:w-[280px] shrink-0 truncate flex items-center gap-2"
+            style={{ paddingLeft: `${depth * 14}px` }}
           >
             {span.hasError ? (
               <AlertCircle className="w-3.5 h-3.5 text-[#EF4444] shrink-0" />
             ) : (
               <CheckCircle2 className="w-3.5 h-3.5 text-[#10B981] shrink-0" />
             )}
-            <span className="font-semibold text-[#DCE2F3] truncate">{span.serviceName}</span>
-            <span className="text-[#6B7280] text-[11px] truncate">{span.operationName}</span>
+            <span className="font-semibold text-[var(--ip-text)] truncate">{span.serviceName}</span>
+            <span className="text-[var(--ip-text-muted)] text-[11px] truncate">{span.operationName}</span>
           </div>
 
           {/* Timing bar */}
-          <div className="flex-1 px-4 relative h-6 flex items-center">
-            {/* Background grid markings */}
+          <div className="flex-1 min-w-[160px] px-4 relative h-6 flex items-center">
             <div className="absolute inset-0 flex justify-between pointer-events-none opacity-15">
-              <div className="border-r border-[#424754] h-full" />
-              <div className="border-r border-[#424754] h-full" />
-              <div className="border-r border-[#424754] h-full" />
-              <div className="border-r border-[#424754] h-full" />
+              <div className="border-r border-[var(--ip-text-muted)] h-full" />
+              <div className="border-r border-[var(--ip-text-muted)] h-full" />
+              <div className="border-r border-[var(--ip-text-muted)] h-full" />
+              <div className="border-r border-[var(--ip-text-muted)] h-full" />
             </div>
 
             <div
-              className={`h-4 rounded-[2px] transition-all relative flex items-center justify-end px-1.5 ${
+              className={`h-4 rounded transition-all relative flex items-center justify-end px-1.5 ${
                 span.hasError
-                  ? 'bg-[#EF4444]/80 text-[#FFF] shadow-[0_0_10px_rgba(239,68,68,0.3)]'
-                  : 'bg-[#3B82F6]/80 text-[#FFF]'
+                  ? 'bg-[#EF4444]/85 text-white'
+                  : isSlow
+                  ? 'bg-[#F59E0B]/85 text-white'
+                  : 'bg-[#3B82F6]/85 text-white'
               }`}
               style={{
                 marginLeft: `${leftPercent}%`,
@@ -68,175 +163,220 @@ export const TraceWaterfall: React.FC<TraceWaterfallProps> = ({ spans }) => {
                 minWidth: '28px',
               }}
             >
-              <span className="text-[10px] font-mono font-medium drop-shadow-sm whitespace-nowrap">
+              <span className="text-[10px] font-mono font-medium whitespace-nowrap">
                 {span.durationMs}ms
               </span>
             </div>
           </div>
 
-          {/* Status code */}
-          <div className="w-[60px] text-right shrink-0">
+          {/* Status */}
+          <div className="w-[70px] text-right shrink-0">
             <span
-              className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${
-                span.statusCode >= 500
-                  ? 'bg-red-950/60 text-[#F87171] border border-red-800/50'
-                  : 'bg-emerald-950/60 text-[#34D399] border border-emerald-800/50'
+              className={`text-[10px] px-1.5 py-0.5 rounded-md font-mono border ${
+                span.hasError
+                  ? 'bg-[#EF4444]/10 text-[#DC2626] dark:text-[#FCA5A5] border-[#EF4444]/25'
+                  : 'bg-[#10B981]/10 text-[#047857] dark:text-[#6EE7B7] border-[#10B981]/25'
               }`}
             >
-              {span.statusCode}
+              {span.tags.status || span.statusCode}
             </span>
           </div>
         </div>
 
-        {/* Render child spans recursively */}
         {span.children?.map((child) => renderSpanRow(child, depth + 1))}
       </div>
     );
   };
 
   return (
-    <div className="bg-[#111827] border border-[#374151] rounded-lg overflow-hidden">
+    <div className="neu-surface rounded-2xl overflow-hidden">
       {/* Header */}
-      <div className="bg-[#151C27] border-b border-[#374151] px-4 py-3 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <Layers className="w-4 h-4 text-[#3B82F6]" />
-          <span className="text-xs font-mono font-semibold text-[#DCE2F3]">
+      <div className="border-b border-[var(--ip-border)] px-5 py-3.5 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2.5 min-w-0">
+          <Layers className="w-4 h-4 text-[#3B82F6] dark:text-[#60A5FA] shrink-0" />
+          <span className="text-xs font-mono font-semibold text-[var(--ip-text)] tracking-wide">
             DISTRIBUTED TRACE WATERFALL
           </span>
-          <span className="text-xs font-mono text-[#6B7280]">
-            Trace ID: <strong className="text-[#9CA3AF]">tr-8f4b1029-ee34</strong>
+          {traceEvidence && (
+            <span
+              className={`text-[10px] font-mono px-2 py-0.5 rounded-md border ${
+                !traceEvidence.available
+                  ? 'text-[#DC2626] dark:text-[#FCA5A5] bg-[#EF4444]/10 border-[#EF4444]/25'
+                  : traceEvidence.data_source === 'LIVE'
+                  ? 'text-[#047857] dark:text-[#6EE7B7] bg-[#10B981]/10 border-[#10B981]/25'
+                  : 'text-[#B45309] dark:text-[#FCD34D] bg-[#F59E0B]/10 border-[#F59E0B]/25'
+              }`}
+            >
+              {!traceEvidence.available
+                ? `${traceEvidence.data_source} UNAVAILABLE`
+                : `${traceEvidence.data_source} · ${traceEvidence.provider.toUpperCase()}`}
+            </span>
+          )}
+          <span className="text-xs font-mono text-[var(--ip-text-muted)] truncate">
+            Trace ID: <strong className="text-[var(--ip-text-secondary)]">{displayTraceId}</strong>
           </span>
+          {traceEvidence?.available && traceEvidence.traces.length > 1 && (
+            <div className="flex flex-wrap items-center gap-1.5 ml-1">
+              {traceEvidence.traces.map((tr, idx) => (
+                <button
+                  key={tr.trace_id}
+                  onClick={() => setActiveTraceIdx(idx)}
+                  className={`text-[10px] font-mono px-2 py-0.5 rounded-md border cursor-pointer transition-colors ${
+                    idx === activeTraceIdx
+                      ? 'bg-[#3B82F6]/15 text-[#2563EB] dark:text-[#93C5FD] border-[#3B82F6]/35'
+                      : 'neu-inset text-[var(--ip-text-secondary)] hover:text-[var(--ip-text)]'
+                  }`}
+                >
+                  #{idx + 1} ({tr.status})
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
-        <div className="flex items-center gap-2">
-          <div className="flex items-center bg-[#080C13] border border-[#374151] rounded p-0.5 text-xs font-mono">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center neu-inset rounded-lg p-0.5 text-xs font-mono">
             <button
               onClick={() => setViewMode('waterfall')}
-              className={`px-2 py-0.5 rounded transition-colors cursor-pointer ${
-                viewMode === 'waterfall' ? 'bg-[#3B82F6] text-white' : 'text-[#9CA3AF] hover:text-white'
+              className={`px-2.5 py-1 rounded-md transition-colors cursor-pointer ${
+                viewMode === 'waterfall' ? 'neu-pill text-[var(--ip-text)] font-medium' : 'text-[var(--ip-text-secondary)] hover:text-[var(--ip-text)]'
               }`}
             >
               Waterfall
             </button>
             <button
               onClick={() => setViewMode('flame')}
-              className={`px-2 py-0.5 rounded transition-colors cursor-pointer ${
-                viewMode === 'flame' ? 'bg-[#3B82F6] text-white' : 'text-[#9CA3AF] hover:text-white'
+              className={`px-2.5 py-1 rounded-md transition-colors cursor-pointer ${
+                viewMode === 'flame' ? 'neu-pill text-[var(--ip-text)] font-medium' : 'text-[var(--ip-text-secondary)] hover:text-[var(--ip-text)]'
               }`}
             >
               Flame Graph
             </button>
           </div>
 
-          <span className="text-xs font-mono text-[#F87171] bg-red-950/40 border border-red-900/60 px-2 py-0.5 rounded">
+          <span className="text-xs font-mono text-[#DC2626] dark:text-[#FCA5A5] bg-[#EF4444]/10 border border-[#EF4444]/25 px-2.5 py-1 rounded-lg">
             Total Latency: {totalDuration}ms
           </span>
         </div>
       </div>
 
-      {/* Main split: Waterfall vs Span Inspector */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-[#374151]">
-        {/* Left: Waterfall / Flame view (8 cols) */}
-        <div className="lg:col-span-8 bg-[#0B0F17] overflow-x-auto">
-          {/* Time axis header */}
-          <div className="flex items-center text-[11px] font-mono text-[#6B7280] py-2 px-3 border-b border-[#1F2937] bg-[#0E1420]">
-            <div className="w-[300px] shrink-0">SERVICE / OPERATION</div>
-            <div className="flex-1 px-4 flex justify-between">
-              <span>0ms</span>
-              <span>450ms</span>
-              <span>900ms</span>
-              <span>1350ms</span>
-              <span>1856ms</span>
+      {traceEvidence && !traceEvidence.available ? (
+        <div className="p-5 bg-[var(--ip-inset)] text-xs font-mono text-[#DC2626] dark:text-[#FCA5A5]">
+          External distributed trace source unavailable ({traceEvidence.unavailable_reason || 'provider error'}). Missing spans were not invented.
+        </div>
+      ) : renderedSpans.length === 0 ? (
+        <div className="p-5 bg-[var(--ip-inset)] text-xs font-mono text-[var(--ip-text-secondary)]">
+          No distributed traces observed for {traceEvidence?.service || 'service'} in the active window ({traceEvidence?.since || '30m'}).
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-[var(--ip-border)]">
+          {/* Left: Waterfall */}
+          <div className="lg:col-span-8 min-w-0 bg-[var(--ip-inset)] overflow-x-auto">
+            <div className="flex items-center text-[11px] font-mono text-[var(--ip-text-muted)] py-2.5 px-3 border-b border-[var(--ip-border)] bg-[var(--ip-surface-alt)] min-w-[480px]">
+              <div className="w-[230px] sm:w-[280px] shrink-0">SERVICE / OPERATION</div>
+              <div className="flex-1 min-w-[160px] px-4 flex justify-between">
+                <span>0ms</span>
+                <span>{Math.round(totalDuration * 0.25)}ms</span>
+                <span>{Math.round(totalDuration * 0.5)}ms</span>
+                <span>{Math.round(totalDuration * 0.75)}ms</span>
+                <span>{totalDuration}ms</span>
+              </div>
+              <div className="w-[70px] text-right shrink-0">STATUS</div>
             </div>
-            <div className="w-[60px] text-right shrink-0">STATUS</div>
+
+            <div className="min-w-[480px]">{renderedSpans.map((span) => renderSpanRow(span))}</div>
           </div>
 
-          {/* Span list */}
-          <div>{spans.map((span) => renderSpanRow(span))}</div>
-        </div>
-
-        {/* Right: Selected Span Inspector Drawer (4 cols) */}
-        <div className="lg:col-span-4 p-4 bg-[#111827] flex flex-col justify-between space-y-4">
-          <div className="space-y-3">
-            <div className="flex items-center justify-between pb-2 border-b border-[#1F2937]">
-              <div className="text-[11px] font-mono text-[#9CA3AF] uppercase">Span Inspector</div>
-              <span
-                className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
-                  selectedSpan.hasError
-                    ? 'bg-red-950/60 text-[#F87171] border border-red-800'
-                    : 'bg-emerald-950/60 text-[#34D399] border border-emerald-800'
-                }`}
-              >
-                HTTP {selectedSpan.statusCode}
-              </span>
-            </div>
-
-            <div>
-              <div className="text-xs font-semibold text-[#F9FAFB] font-mono truncate">
-                {selectedSpan.serviceName}
-              </div>
-              <div className="text-[11px] font-mono text-[#9CA3AF] truncate mt-0.5">
-                {selectedSpan.operationName}
-              </div>
-            </div>
-
-            {/* Timing KPI */}
-            <div className="grid grid-cols-2 gap-2 bg-[#080C13] border border-[#1F2937] rounded p-2.5 text-xs font-mono">
-              <div>
-                <span className="text-[10px] text-[#6B7280] block">Span Duration</span>
-                <span className={`text-sm font-semibold tabular-nums ${selectedSpan.hasError ? 'text-[#EF4444]' : 'text-[#3B82F6]'}`}>
-                  {selectedSpan.durationMs}ms
-                </span>
-              </div>
-              <div>
-                <span className="text-[10px] text-[#6B7280] block">Start Offset</span>
-                <span className="text-sm font-semibold text-[#DCE2F3] tabular-nums">
-                  +{selectedSpan.startOffsetMs}ms
-                </span>
-              </div>
-            </div>
-
-            {/* SQL Query breakdown if database span */}
-            {selectedSpan.sqlQuery && (
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between text-[11px] font-mono text-[#9CA3AF]">
-                  <span className="flex items-center gap-1">
-                    <Database className="w-3.5 h-3.5 text-[#ca8100]" />
-                    Executed Statement
-                  </span>
-                  <button
-                    onClick={() => copySql(selectedSpan.sqlQuery!)}
-                    className="flex items-center gap-1 text-[10px] text-[#60A5FA] hover:underline cursor-pointer"
-                  >
-                    {copiedQuery ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                    <span>{copiedQuery ? 'Copied' : 'Copy SQL'}</span>
-                  </button>
-                </div>
-                <div className="bg-[#080C13] border border-[#374151] rounded p-2 text-[11px] font-mono text-[#FFB95F] leading-relaxed overflow-x-auto">
-                  <code>{selectedSpan.sqlQuery}</code>
-                </div>
-              </div>
-            )}
-
-            {/* Metadata Tags */}
-            <div className="space-y-1.5">
-              <div className="text-[11px] font-mono text-[#9CA3AF] uppercase">Span Attributes & Tags</div>
-              <div className="bg-[#080C13] border border-[#1F2937] rounded divide-y divide-[#1F2937] max-h-[160px] overflow-y-auto font-mono text-[11px]">
-                {Object.entries(selectedSpan.tags).map(([key, val]) => (
-                  <div key={key} className="flex items-start justify-between p-1.5 gap-2">
-                    <span className="text-[#9CA3AF] truncate shrink-0">{key}:</span>
-                    <span className="text-[#DCE2F3] truncate text-right">{val}</span>
+          {/* Right: Selected Span Inspector */}
+          {selectedSpan && (
+            <div className="lg:col-span-4 min-w-0 p-4 sm:p-5 bg-[var(--ip-surface)] flex flex-col justify-between space-y-4">
+              <div className="space-y-3.5">
+                <div className="flex items-center justify-between pb-2.5 border-b border-[var(--ip-border)]">
+                  <div className="text-[11px] font-mono text-[var(--ip-text-secondary)] uppercase tracking-wider">
+                    Span Inspector
                   </div>
-                ))}
+                  <span
+                    className={`text-[10px] font-mono px-2 py-0.5 rounded-md border ${
+                      selectedSpan.hasError
+                        ? 'bg-[#EF4444]/10 text-[#DC2626] dark:text-[#FCA5A5] border-[#EF4444]/25'
+                        : 'bg-[#10B981]/10 text-[#047857] dark:text-[#6EE7B7] border-[#10B981]/25'
+                    }`}
+                  >
+                    {selectedSpan.tags.status || `HTTP ${selectedSpan.statusCode}`}
+                  </span>
+                </div>
+
+                <div>
+                  <div className="text-xs font-semibold text-[var(--ip-text)] font-mono truncate">
+                    {selectedSpan.serviceName}
+                  </div>
+                  <div className="text-[11px] font-mono text-[var(--ip-text-secondary)] truncate mt-0.5">
+                    {selectedSpan.operationName}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2.5 neu-inset rounded-xl p-3 text-xs font-mono">
+                  <div>
+                    <span className="text-[10px] text-[var(--ip-text-muted)] block">Span Duration</span>
+                    <span
+                      className={`text-sm font-semibold tabular-nums ${
+                        selectedSpan.hasError ? 'text-[#DC2626] dark:text-[#FCA5A5]' : 'text-[#2563EB] dark:text-[#60A5FA]'
+                      }`}
+                    >
+                      {selectedSpan.durationMs}ms
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-[var(--ip-text-muted)] block">Start Offset</span>
+                    <span className="text-sm font-semibold text-[var(--ip-text)] tabular-nums">
+                      +{selectedSpan.startOffsetMs}ms
+                    </span>
+                  </div>
+                </div>
+
+                {selectedSpan.sqlQuery && (
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between text-[11px] font-mono text-[var(--ip-text-secondary)]">
+                      <span className="flex items-center gap-1.5">
+                        <Database className="w-3.5 h-3.5 text-[#F59E0B]" />
+                        Executed Statement
+                      </span>
+                      <button
+                        onClick={() => copySql(selectedSpan.sqlQuery!)}
+                        className="flex items-center gap-1 text-[10px] text-[#2563EB] dark:text-[#60A5FA] hover:underline cursor-pointer"
+                      >
+                        {copiedQuery ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                        <span>{copiedQuery ? 'Copied' : 'Copy SQL'}</span>
+                      </button>
+                    </div>
+                    <div className="neu-inset rounded-xl p-2.5 text-[11px] font-mono text-[#B45309] dark:text-[#FCD34D] leading-relaxed overflow-x-auto">
+                      <code>{selectedSpan.sqlQuery}</code>
+                    </div>
+                  </div>
+                )}
+
+                <div className="space-y-1.5">
+                  <div className="text-[11px] font-mono text-[var(--ip-text-secondary)] uppercase tracking-wider">
+                    Span Attributes & Tags
+                  </div>
+                  <div className="neu-inset rounded-xl divide-y divide-[var(--ip-border)] max-h-[160px] overflow-y-auto font-mono text-[11px]">
+                    {Object.entries(selectedSpan.tags).map(([key, val]) => (
+                      <div key={key} className="flex items-start justify-between p-2 gap-2">
+                        <span className="text-[var(--ip-text-secondary)] truncate shrink-0">{key}:</span>
+                        <span className="text-[var(--ip-text)] break-words text-right">{val}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="pt-2.5 text-[10px] font-mono text-[var(--ip-text-muted)] border-t border-[var(--ip-border)]">
+                Trace span # {selectedSpan.id} · Provenance: {selectedSpan.tags.data_source || 'SIMULATED'}
               </div>
             </div>
-          </div>
-
-          <div className="pt-2 text-[10px] font-mono text-[#6B7280] border-t border-[#1F2937]">
-            OpenTelemetry collector span # {selectedSpan.id}
-          </div>
+          )}
         </div>
-      </div>
+      )}
     </div>
   );
 };

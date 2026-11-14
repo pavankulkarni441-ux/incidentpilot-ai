@@ -1,10 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Header, NavTab } from './components/Header';
 import { WarRoomView } from './components/WarRoom/WarRoomView';
 import { TriageView } from './components/Triage/TriageView';
 import { TopologyView } from './components/Topology/TopologyView';
 import { AuditView } from './components/Audit/AuditView';
-import { DesignSystemView } from './components/DesignSystem/DesignSystemView';
+import { IncidentDashboardView } from './components/Audit/IncidentDashboardView';
 import { DeclareIncidentModal } from './components/DeclareIncidentModal';
 import { N8nSetupGuideModal } from './components/N8nSetupGuideModal';
 import {
@@ -26,8 +26,50 @@ export default function App() {
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>(auditEventsList);
   const [isDeclareModalOpen, setIsDeclareModalOpen] = useState(false);
   const [isSetupGuideOpen, setIsSetupGuideOpen] = useState(false);
+  const [isIncidentDashboardOpen, setIsIncidentDashboardOpen] = useState(false);
+  const [isDarkMode, setIsDarkMode] = useState(true);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    if (isDarkMode) {
+      root.classList.add('dark');
+    } else {
+      root.classList.remove('dark');
+    }
+  }, [isDarkMode]);
+
+  const syncServerAuditEvents = useCallback(async () => {
+    try {
+      const res = await fetch('/api/audit');
+      if (!res.ok) return;
+      const data = await res.json();
+      if (Array.isArray(data.events) && data.events.length > 0) {
+        setAuditEvents((prev) => {
+          const existingIds = new Set(prev.map((e) => e.id));
+          const fresh = (data.events as AuditEvent[]).filter((e) => !existingIds.has(e.id));
+          return fresh.length > 0 ? [...fresh, ...prev] : prev;
+        });
+      }
+    } catch {
+      // Non-fatal if audit endpoint is unreachable
+    }
+  }, []);
+
+  useEffect(() => {
+    syncServerAuditEvents();
+  }, [activeTab, isIncidentDashboardOpen, syncServerAuditEvents]);
+
+  const handleSelectTab = (tab: NavTab) => {
+    setIsIncidentDashboardOpen(false);
+    setActiveTab(tab);
+  };
+
+  const handleAuditEventRecorded = (event: AuditEvent) => {
+    setAuditEvents((prev) => (prev.some((e) => e.id === event.id) ? prev : [event, ...prev]));
+  };
 
   const handleSelectIncident = (inc: Incident) => {
+    setIsIncidentDashboardOpen(false);
     setActiveIncident(inc);
     setActiveTab('warroom');
   };
@@ -54,31 +96,38 @@ export default function App() {
       errorRatePercent: newIncData.errorRatePercent || 12.0,
     };
 
+    setIsIncidentDashboardOpen(false);
     setAllIncidents((prev) => [fullNewIncident, ...prev]);
     setActiveIncident(fullNewIncident);
     setActiveTab('warroom');
   };
 
   /**
-   * Handle real verified n8n webhook response
-   * Updates incident state and appends real audit event
+   * Handle real verified workflow response (Node.js Orchestrator or Legacy n8n Webhook)
+   * Updates incident state and appends audit event when triggered via legacy n8n
    */
   const handleExecutionCompleteWithResult = (result: N8nWorkflowResponse) => {
-    const timeFormatted = result.execution_timestamp
-      ? new Date(result.execution_timestamp).toTimeString().split(' ')[0] + ' UTC'
-      : new Date().toTimeString().split(' ')[0] + ' UTC';
+    const isNativeNodejs = result.raw?.engine === 'nodejs_express_native';
 
-    const newAuditEvent: AuditEvent = {
-      id: `aud-${Date.now()}`,
-      timestamp: timeFormatted,
-      actorType: 'N8N_WORKFLOW',
-      actorName: 'n8n Production Workflow',
-      action: `Remediation Workflow Executed (Status: ${result.workflow_status || 'completed'})`,
-      details: `[Approval ID: ${result.approval_id}] Result: ${result.result_message}. Simulated execution verified on target service ${activeIncident.service}.`,
-      verificationStatus: result.success ? 'verified' : 'failed',
-    };
+    if (!isNativeNodejs) {
+      const timeFormatted = result.execution_timestamp
+        ? new Date(result.execution_timestamp).toTimeString().split(' ')[0] + ' UTC'
+        : new Date().toTimeString().split(' ')[0] + ' UTC';
 
-    setAuditEvents((prev) => [newAuditEvent, ...prev]);
+      const newAuditEvent: AuditEvent = {
+        id: `aud-${Date.now()}`,
+        timestamp: timeFormatted,
+        actorType: 'N8N_WORKFLOW',
+        actorName: 'n8n Production Workflow',
+        action: `Remediation Workflow Executed (Status: ${result.workflow_status || 'completed'})`,
+        details: `[Approval ID: ${result.approval_id}] Result: ${result.result_message}. Simulated execution verified on target service ${activeIncident.service}.`,
+        verificationStatus: result.success ? 'verified' : 'failed',
+      };
+
+      setAuditEvents((prev) => [newAuditEvent, ...prev]);
+    } else {
+      syncServerAuditEvents();
+    }
 
     const updatedInc: Incident = {
       ...activeIncident,
@@ -95,62 +144,53 @@ export default function App() {
     );
   };
 
+  const handleRejectionComplete = () => {
+    syncServerAuditEvents();
+    const updatedInc: Incident = {
+      ...activeIncident,
+      workflowStatus: 'rejected',
+    };
+    setActiveIncident(updatedInc);
+    setAllIncidents((prev) =>
+      prev.map((inc) => (inc.id === activeIncident.id ? updatedInc : inc))
+    );
+  };
+
   return (
-    <div className="min-h-screen bg-[#0C141F] text-[#DCE2F3] flex flex-col font-sans">
+    <div className="min-h-screen bg-[var(--ip-canvas)] text-[var(--ip-text)] flex flex-col font-sans overflow-x-hidden transition-colors duration-150">
       {/* Top Bar Header */}
       <Header
         activeTab={activeTab}
-        onSelectTab={setActiveTab}
+        onSelectTab={handleSelectTab}
         onOpenDeclareModal={() => setIsDeclareModalOpen(true)}
-        activeSeverity={activeIncident.severity}
       />
 
       {/* Mobile Sub-Navigation Bar */}
-      <div className="md:hidden flex items-center overflow-x-auto bg-[#080C13] border-b border-[#1F2937] px-4 py-2 gap-3 text-xs font-mono">
-        <button
-          onClick={() => setActiveTab('warroom')}
-          className={`px-2.5 py-1 rounded whitespace-nowrap cursor-pointer ${
-            activeTab === 'warroom' ? 'bg-[#3B82F6] text-white' : 'text-[#9CA3AF]'
-          }`}
-        >
-          War Room
-        </button>
-        <button
-          onClick={() => setActiveTab('triage')}
-          className={`px-2.5 py-1 rounded whitespace-nowrap cursor-pointer ${
-            activeTab === 'triage' ? 'bg-[#3B82F6] text-white' : 'text-[#9CA3AF]'
-          }`}
-        >
-          Queue
-        </button>
-        <button
-          onClick={() => setActiveTab('topology')}
-          className={`px-2.5 py-1 rounded whitespace-nowrap cursor-pointer ${
-            activeTab === 'topology' ? 'bg-[#3B82F6] text-white' : 'text-[#9CA3AF]'
-          }`}
-        >
-          Topology
-        </button>
-        <button
-          onClick={() => setActiveTab('audit')}
-          className={`px-2.5 py-1 rounded whitespace-nowrap cursor-pointer ${
-            activeTab === 'audit' ? 'bg-[#3B82F6] text-white' : 'text-[#9CA3AF]'
-          }`}
-        >
-          Audit
-        </button>
-        <button
-          onClick={() => setActiveTab('design-system')}
-          className={`px-2.5 py-1 rounded whitespace-nowrap cursor-pointer ${
-            activeTab === 'design-system' ? 'bg-[#3B82F6] text-white' : 'text-[#9CA3AF]'
-          }`}
-        >
-          Design System
-        </button>
+      <div className="md:hidden flex items-center overflow-x-auto bg-[var(--ip-surface-alt)] border-b border-[var(--ip-border)] px-4 py-2 gap-1.5 text-xs">
+        {(
+          [
+            { id: 'warroom', label: 'War Room' },
+            { id: 'triage', label: 'Queue' },
+            { id: 'topology', label: 'Topology' },
+            { id: 'audit', label: 'Audit Trail' },
+          ] as const
+        ).map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => handleSelectTab(tab.id)}
+            className={`px-3 py-1.5 rounded-lg whitespace-nowrap shrink-0 cursor-pointer transition-colors ${
+              activeTab === tab.id
+                ? 'neu-pill text-[var(--ip-text)] font-medium'
+                : 'text-[var(--ip-text-secondary)] hover:text-[var(--ip-text)]'
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
       </div>
 
       {/* Main Content Area */}
-      <main className="flex-1 max-w-[1440px] w-full mx-auto p-4 sm:p-6 lg:p-8">
+      <main className="flex-1 max-w-[1440px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 min-w-0">
         {activeTab === 'warroom' && (
           <WarRoomView
             incident={activeIncident}
@@ -158,8 +198,13 @@ export default function App() {
             pods={initialPods}
             spans={initialTraceSpans}
             logs={initialTelemetryLogs}
+            services={topologyServices}
+            isDarkMode={isDarkMode}
+            onToggleDarkMode={() => setIsDarkMode((prev) => !prev)}
             onNavigateToAudit={() => setActiveTab('audit')}
             onExecutionCompleteWithResult={handleExecutionCompleteWithResult}
+            onRejectionComplete={handleRejectionComplete}
+            onAuditEventRecorded={handleAuditEventRecorded}
             onOpenSetupGuide={() => setIsSetupGuideOpen(true)}
           />
         )}
@@ -174,30 +219,37 @@ export default function App() {
 
         {activeTab === 'topology' && <TopologyView services={topologyServices} />}
 
-        {activeTab === 'audit' && (
-          <AuditView events={auditEvents} activeIncident={activeIncident} />
+        {activeTab === 'audit' && !isIncidentDashboardOpen && (
+          <AuditView
+            events={auditEvents}
+            activeIncident={activeIncident}
+            onOpenIncidentDashboard={() => setIsIncidentDashboardOpen(true)}
+          />
         )}
 
-        {activeTab === 'design-system' && <DesignSystemView />}
+        {activeTab === 'audit' && isIncidentDashboardOpen && (
+          <IncidentDashboardView
+            incident={activeIncident}
+            auditEvents={auditEvents}
+            onBackToAudit={() => setIsIncidentDashboardOpen(false)}
+            onOpenWarRoom={() => handleSelectTab('warroom')}
+          />
+        )}
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-[#1F2937] bg-[#080C13] text-[#6B7280] text-xs font-mono py-4 px-6">
+      <footer className="border-t border-[var(--ip-border)] bg-[var(--ip-canvas)] text-[var(--ip-text-muted)] text-xs py-4 px-6">
         <div className="max-w-[1440px] mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
-          <div>
-            IncidentPilot Platform • SRE High-Stakes War Room & Autonomous Remediation
-          </div>
+          <div>IncidentPilot · Human-in-the-Loop Incident Command</div>
           <div className="flex items-center gap-4 text-[11px]">
             <button
               onClick={() => setIsSetupGuideOpen(true)}
-              className="text-[#60A5FA] hover:underline cursor-pointer"
+              className="text-[#2563EB] dark:text-[#60A5FA] hover:underline cursor-pointer"
             >
-              n8n Secrets Setup Guide
+              Integration & Secrets Guide
             </button>
-            <span>•</span>
-            <span>Cluster: prod-us-east-k8s</span>
-            <span>•</span>
-            <span className="text-[#34D399]">Telemetry Heartbeat 100%</span>
+            <span aria-hidden="true">·</span>
+            <span>simulation_mode=true enforced</span>
           </div>
         </div>
       </footer>
